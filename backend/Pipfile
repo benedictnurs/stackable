@@ -9,6 +9,7 @@ pydantic = "*"
 [dev-packages]
 black = "*"
 pre-commit = "*"
+ruff = "*"
 
 [requires]
 python_version = "3.13"
