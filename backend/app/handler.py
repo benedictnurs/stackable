@@ -10,7 +10,7 @@ from pathlib import Path
 def run_job():
     deployment_service = DeploymentService(directory=Path("temp_deployment"))
 
-    # Create proper Pydantic payloads
+    # Create proper Pydantic payload
     payload = Payload(
         oracle_cloud=OCIVars(
             tenancy_ocid="ocid1.tenancy.oc1..tenancy",

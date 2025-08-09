@@ -257,7 +257,7 @@ resource "oci_core_instance" "vm" {
   }
 
   metadata = {
-    ssh_authorized_keys = file("{{ public_pem_path }}")
+    ssh_authorized_keys = "{{ ssh_public_key }}"
     user_data           = base64encode(local.user_data_script)
   }
 
@@ -363,7 +363,7 @@ resource "github_actions_secret" "deploy_user" {
 resource "github_actions_secret" "deploy_key" {
   repository      = "{{ repo_name }}"
   secret_name     = "DEPLOY_KEY"
-  plaintext_value = file("{{ private_pem_path }}")
+  plaintext_value = "{{ ssh_private_key }}"
 }
 
 resource "github_actions_secret" "docker_image" {
