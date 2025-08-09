@@ -89,12 +89,12 @@ provider "oci" {
 }
 
 provider "cloudflare" {
-  api_token = var.cf_api_token
+  api_token = "{{ cf_api_token }}"
 }
 
 provider "github" {
-  token = var.github_token
-  owner = var.github_owner
+  token = "{{ github_token }}"
+  owner = "{{ github_owner }}"
 }
 
 provider "random" {}
@@ -103,20 +103,20 @@ provider "random" {}
 # Networking (VCN + Subnet + IGW)
 ################################
 resource "oci_core_vcn" "vcn" {
-  compartment_id = var.compartment_ocid
+  compartment_id = "{{ compartment_ocid }}"
   cidr_block     = "10.0.0.0/16"
   display_name   = "backend-vcn"
   dns_label      = "backendvcn"
 }
 
 resource "oci_core_internet_gateway" "igw" {
-  compartment_id = var.compartment_ocid
+  compartment_id = "{{ compartment_ocid }}"
   vcn_id         = oci_core_vcn.vcn.id
   display_name   = "igw"
 }
 
 resource "oci_core_route_table" "rt" {
-  compartment_id = var.compartment_ocid
+  compartment_id = "{{ compartment_ocid }}"
   vcn_id         = oci_core_vcn.vcn.id
 
   route_rules {
@@ -127,7 +127,7 @@ resource "oci_core_route_table" "rt" {
 }
 
 resource "oci_core_security_list" "allow_ssh" {
-  compartment_id = var.compartment_ocid
+  compartment_id = "{{ compartment_ocid }}"
   vcn_id         = oci_core_vcn.vcn.id
   display_name   = "Allow SSH"
 
@@ -149,7 +149,7 @@ resource "oci_core_security_list" "allow_ssh" {
 }
 
 resource "oci_core_subnet" "subnet" {
-  compartment_id             = var.compartment_ocid
+  compartment_id             = "{{ compartment_ocid }}"
   vcn_id                     = oci_core_vcn.vcn.id
   cidr_block                 = "10.0.1.0/24"
   display_name               = "backend-subnet"
@@ -168,14 +168,14 @@ resource "random_password" "tunnel_secret" {
 }
 
 resource "cloudflare_zero_trust_tunnel_cloudflared" "backend" {
-  account_id = var.cf_account_id
+  account_id = "{{ cf_account_id }}"
   name       = "oci-backend"
   secret     = base64encode(random_password.tunnel_secret.result)
 }
 
 resource "cloudflare_record" "api_dns" {
-  count   = var.domain == "" ? 0 : 1
-  zone_id = var.cf_zone_id
+  count   = "{{ domain }}" == "" ? 0 : 1
+  zone_id = "{{ cf_zone_id }}"
   name    = "api"
   type    = "CNAME"
   content = cloudflare_zero_trust_tunnel_cloudflared.backend.cname
@@ -183,12 +183,12 @@ resource "cloudflare_record" "api_dns" {
 }
 
 resource "cloudflare_zero_trust_tunnel_cloudflared_config" "backend_config" {
-  account_id = var.cf_account_id
+  account_id = "{{ cf_account_id }}"
   tunnel_id  = cloudflare_zero_trust_tunnel_cloudflared.backend.id
 
   config {
     ingress_rule {
-      hostname = "api.${var.domain}"
+      hostname = "api.{{ domain }}"
       service  = "http://localhost:8080"
     }
     ingress_rule {
@@ -205,9 +205,9 @@ locals {
     #!/bin/bash
     set -e
 
-    useradd -m -s /bin/bash ${var.vm_username}
-    echo '${var.vm_username}:${var.vm_password}' | chpasswd
-    usermod -aG sudo ${var.vm_username}
+    useradd -m -s /bin/bash {{ vm_username }}
+    echo '{{ vm_username }}:{{ vm_password }}' | chpasswd
+    usermod -aG sudo {{ vm_username }}
 
     apt-get update -y
     apt-get install -y docker.io
@@ -223,9 +223,9 @@ locals {
     cloudflared service install ${cloudflare_zero_trust_tunnel_cloudflared.backend.tunnel_token}
     systemctl start cloudflared
 
-    echo "${var.github_token}" | docker login ghcr.io -u "${var.github_owner}" --password-stdin
+    echo "{{ github_token }}" | docker login ghcr.io -u "{{ github_owner }}" --password-stdin
 
-    docker run -d --restart=always -p 8080:8080 ${var.docker_image}
+    docker run -d --restart=always -p 8080:8080 {{ docker_image }}
   EOT
 }
 
@@ -233,11 +233,11 @@ locals {
 # Compute Instance
 ################################
 data "oci_identity_availability_domains" "ads" {
-  compartment_id = "{{ tenancy_ocid }}"
+  compartment_id = "{{ compartment_ocid }}"
 }
 
 data "oci_core_images" "ubuntu" {
-  compartment_id           = var.compartment_ocid
+  compartment_id           = "{{ compartment_ocid }}"
   operating_system         = "Canonical Ubuntu"
   operating_system_version = "20.04"
   shape                    = "{{ flex.shape }}"
@@ -247,9 +247,9 @@ data "oci_core_images" "ubuntu" {
 
 resource "oci_core_instance" "vm" {
   availability_domain = data.oci_identity_availability_domains.ads.availability_domains[0].name
-  compartment_id      = var.compartment_ocid
+  compartment_id      = "{{ compartment_ocid }}"
   shape               = "{{ flex.shape }}"
-  display_name        = "backend-vm"
+  display_name        = "{{ instance_name }}"
 
   create_vnic_details {
     subnet_id        = oci_core_subnet.subnet.id
@@ -257,7 +257,7 @@ resource "oci_core_instance" "vm" {
   }
 
   metadata = {
-    ssh_authorized_keys = var.ssh_public_key
+    ssh_authorized_keys = file("{{ public_pem_path }}")
     user_data           = base64encode(local.user_data_script)
   }
 
@@ -289,14 +289,14 @@ locals {
           - uses: docker/login-action@v3
             with:
               registry: ghcr.io
-              username: $${{ secrets.REPO_OWNER }}
-              password: $${{ secrets.GHCR_TOKEN }}
+              username: ${{ "${{ secrets.REPO_OWNER }}" }}
+              password: ${{ "${{ secrets.GHCR_TOKEN }}" }}
           - uses: docker/build-push-action@v5
             with:
               context: ./backend
               file: ./backend/Dockerfile
               push: true
-              tags: $${{ secrets.DOCKER_IMAGE }}
+              tags: ${{ "${{ secrets.DOCKER_IMAGE }}" }}
 
       deploy:
         name: Deploy to OCI
@@ -306,25 +306,25 @@ locals {
           - name: SSH and Deploy
             uses: appleboy/ssh-action@master
             with:
-              host: $${{ secrets.DEPLOY_HOST }}
-              username: $${{ secrets.DEPLOY_USER }}
-              key: $${{ secrets.DEPLOY_KEY }}
+              host: ${{ "${{ secrets.DEPLOY_HOST }}" }}
+              username: ${{ "${{ secrets.DEPLOY_USER }}" }}
+              key: ${{ "${{ secrets.DEPLOY_KEY }}" }}
               script: |
                 set -e
                 echo "--- STARTING DEPLOYMENT ---"
 
                 echo "--> Logging in to GHCR..."
-                echo $${{ secrets.GHCR_TOKEN }} | sudo docker login ghcr.io -u $${{ secrets.REPO_OWNER }} --password-stdin
+                echo ${{ "${{ secrets.GHCR_TOKEN }}" }} | sudo docker login ghcr.io -u ${{ "${{ secrets.REPO_OWNER }}" }} --password-stdin
 
                 echo "--> Stopping existing container..."
                 sudo docker stop backend-app || true
                 sudo docker rm backend-app || true
 
                 echo "--> Pulling new Docker image..."
-                sudo docker pull $${{ secrets.DOCKER_IMAGE }}
+                sudo docker pull ${{ "${{ secrets.DOCKER_IMAGE }}" }}
 
                 echo "--> Starting new container..."
-                sudo docker run -d --restart=always --name backend-app -p 8080:8080 $${{ secrets.DOCKER_IMAGE }}
+                sudo docker run -d --restart=always --name backend-app -p 8080:8080 ${{ "${{ secrets.DOCKER_IMAGE }}" }}
 
                 echo "--> Pruning old images..."
                 sudo docker image prune -f
@@ -334,7 +334,7 @@ locals {
 }
 
 resource "github_repository_file" "deploy-backend" {
-  repository          = var.repo_name
+  repository          = "{{ repo_name }}"
   file                = ".github/workflows/deploy-backend.yml"
   branch              = "main"
   content             = local.ci_workflow
@@ -343,39 +343,39 @@ resource "github_repository_file" "deploy-backend" {
 }
 
 resource "github_actions_secret" "ghcr" {
-  repository      = var.repo_name
+  repository      = "{{ repo_name }}"
   secret_name     = "GHCR_TOKEN"
-  plaintext_value = var.github_token
+  plaintext_value = "{{ github_token }}"
 }
 
 resource "github_actions_secret" "deploy_host" {
-  repository      = var.repo_name
+  repository      = "{{ repo_name }}"
   secret_name     = "DEPLOY_HOST"
   plaintext_value = oci_core_instance.vm.public_ip
 }
 
 resource "github_actions_secret" "deploy_user" {
-  repository      = var.repo_name
+  repository      = "{{ repo_name }}"
   secret_name     = "DEPLOY_USER"
-  plaintext_value = var.vm_username
+  plaintext_value = "{{ vm_username }}"
 }
 
 resource "github_actions_secret" "deploy_key" {
-  repository      = var.repo_name
+  repository      = "{{ repo_name }}"
   secret_name     = "DEPLOY_KEY"
-  plaintext_value = var.ssh_private_key
+  plaintext_value = file("{{ private_pem_path }}")
 }
 
 resource "github_actions_secret" "docker_image" {
-  repository      = var.repo_name
+  repository      = "{{ repo_name }}"
   secret_name     = "DOCKER_IMAGE"
-  plaintext_value = var.docker_image
+  plaintext_value = "{{ docker_image }}"
 }
 
 resource "github_actions_secret" "repo_owner_secret" {
-  repository      = var.repo_name
+  repository      = "{{ repo_name }}"
   secret_name     = "REPO_OWNER"
-  plaintext_value = var.github_owner
+  plaintext_value = "{{ github_owner }}"
 }
 
 ################################

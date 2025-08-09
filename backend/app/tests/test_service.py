@@ -264,3 +264,229 @@ class TestDeploymentService:
         assert captured["pem_path"] == "/home/user/.ssh/id_rsa"
         assert captured["private_pem_path"] == "/home/user/.ssh/id_rsa"
         assert captured["public_pem_path"] == "/home/user/.ssh/id_rsa.pub"
+
+    def test_template_rendering_with_real_template(self, tmp_path, sample_payload):
+        """Test that the service actually renders the Jinja2 template correctly."""
+        svc = DeploymentService(directory=tmp_path)
+
+        priv_key = Path("test_private_key")
+        pub_key = Path("test_public_key")
+
+        result = svc.set_payload(sample_payload, priv_key, pub_key)
+
+        # Verify the template was rendered (should return a string)
+        assert isinstance(result, str)
+        assert len(result) > 0
+
+        # Verify specific template content was rendered with our data
+        assert "ocid1.tenancy.oc1..tenancy" in result
+        assert "ocid1.user.oc1..user" in result
+        assert "aa:bb:cc:dd:ee" in result
+        assert "us-phoenix-1" in result
+        assert "cf_token_123" in result
+        assert "cf_account_456" in result
+        assert "gh_token_123" in result
+        assert "testuser" in result
+        assert "testrepo" in result
+        assert "test_private_key" in result
+        assert "test_public_key" in result
+
+    def test_template_contains_terraform_resources(self, tmp_path, sample_payload):
+        """Test that the rendered template contains expected Terraform resources."""
+        svc = DeploymentService(directory=tmp_path)
+
+        priv_key = Path("private.key")
+        pub_key = Path("public.key")
+
+        result = svc.set_payload(sample_payload, priv_key, pub_key)
+
+        # Verify Terraform provider blocks are rendered
+        assert 'provider "oci"' in result
+        assert 'provider "cloudflare"' in result
+        assert 'provider "github"' in result
+
+        # Verify OCI resources are rendered
+        assert 'resource "oci_core_vcn"' in result
+        assert 'resource "oci_core_instance"' in result
+        assert 'resource "oci_core_subnet"' in result
+
+        # Verify Cloudflare resources are rendered
+        assert 'resource "cloudflare_zero_trust_tunnel_cloudflared"' in result
+        assert 'resource "cloudflare_record"' in result
+
+        # Verify GitHub resources are rendered
+        assert 'resource "github_repository_file"' in result
+        assert 'resource "github_actions_secret"' in result
+
+    def test_template_variable_substitution(self, tmp_path, sample_payload):
+        """Test that Jinja2 variables are properly substituted in the template."""
+        svc = DeploymentService(directory=tmp_path)
+
+        priv_key = Path("/path/to/private.pem")
+        pub_key = Path("/path/to/public.pem")
+
+        result = svc.set_payload(sample_payload, priv_key, pub_key)
+
+        # Verify Oracle Cloud variables are substituted
+        assert 'tenancy_ocid     = "ocid1.tenancy.oc1..tenancy"' in result
+        assert 'user_ocid        = "ocid1.user.oc1..user"' in result
+        assert 'fingerprint      = "aa:bb:cc:dd:ee"' in result
+        assert 'region           = "us-phoenix-1"' in result
+        assert 'private_key_path = "/path/to/private.pem"' in result
+
+        # Verify Cloudflare variables are substituted
+        assert 'api_token = "cf_token_123"' in result
+        assert 'account_id = "cf_account_456"' in result
+
+        # Verify GitHub variables are substituted
+        assert 'token = "gh_token_123"' in result
+        assert 'owner = "testuser"' in result
+
+        # Verify VM variables are substituted
+        assert "useradd -m -s /bin/bash testuser" in result
+        assert "echo 'testuser:testpass'" in result
+
+        # Verify flex shape variables are substituted
+        assert 'shape                    = "VM.Standard3.Flex"' in result
+
+    def test_template_github_actions_workflow_generation(
+        self, tmp_path, sample_payload
+    ):
+        """Test that GitHub Actions workflow is properly generated in the template."""
+        svc = DeploymentService(directory=tmp_path)
+
+        priv_key = Path("deploy_key")
+        pub_key = Path("deploy_key.pub")
+
+        result = svc.set_payload(sample_payload, priv_key, pub_key)
+
+        # Verify GitHub Actions workflow content
+        assert "name: Build & Deploy Backend" in result
+        assert "runs-on: ubuntu-latest" in result
+        assert "uses: actions/checkout@v4" in result
+        assert "uses: docker/build-push-action@v5" in result
+        assert "uses: appleboy/ssh-action@master" in result
+
+        # Verify GitHub Actions secrets are properly escaped
+        assert "${{ secrets.REPO_OWNER }}" in result
+        assert "${{ secrets.GHCR_TOKEN }}" in result
+        assert "${{ secrets.DOCKER_IMAGE }}" in result
+        assert "${{ secrets.DEPLOY_HOST }}" in result
+        assert "${{ secrets.DEPLOY_KEY }}" in result
+
+    def test_template_handles_empty_domain(self, tmp_path):
+        """Test template handling when domain is empty."""
+        payload = Payload(
+            oracle_cloud=OCIVars(
+                tenancy_ocid="ocid1.tenancy.test",
+                user_ocid="ocid1.user.test",
+                fingerprint="test:fingerprint",
+                region="us-test-1",
+                compartment_ocid="ocid1.compartment.test",
+            ),
+            cloudflare=CloudflareVars(
+                cf_api_token="test_token",
+                cf_account_id="test_account",
+                cf_zone_id="",  # Empty zone
+                domain="",  # Empty domain
+            ),
+            github=GithubVars(
+                github_token="test_token",
+                github_owner="testowner",
+                repo_name="testrepo",
+                docker_image="test_image",
+            ),
+        )
+
+        svc = DeploymentService(directory=tmp_path)
+        result = svc.set_payload(payload, Path("key"), Path("key.pub"))
+
+        # Verify conditional rendering for empty domain
+        assert 'count   = "" == "" ? 0 : 1' in result
+        assert 'zone_id = ""' in result
+        assert 'hostname = "api."' in result  # Empty domain results in "api."
+
+    def test_template_with_custom_domain(self, tmp_path):
+        """Test template rendering with a custom domain."""
+        payload = Payload(
+            oracle_cloud=OCIVars(
+                tenancy_ocid="ocid1.tenancy.test",
+                user_ocid="ocid1.user.test",
+                fingerprint="test:fingerprint",
+                region="us-test-1",
+                compartment_ocid="ocid1.compartment.test",
+            ),
+            cloudflare=CloudflareVars(
+                cf_api_token="test_token",
+                cf_account_id="test_account",
+                cf_zone_id="zone123",
+                domain="myapp.com",
+            ),
+            github=GithubVars(
+                github_token="test_token",
+                github_owner="testowner",
+                repo_name="testrepo",
+                docker_image="test_image",
+            ),
+        )
+
+        svc = DeploymentService(directory=tmp_path)
+        result = svc.set_payload(payload, Path("key"), Path("key.pub"))
+
+        # Verify custom domain is rendered
+        assert 'count   = "myapp.com" == "" ? 0 : 1' in result
+        assert 'zone_id = "zone123"' in result
+        assert 'hostname = "api.myapp.com"' in result
+
+    def test_template_flex_shape_configuration(self, tmp_path):
+        """Test template rendering with different flex shape configurations."""
+        # Test with custom flex shape
+        payload_with_flex = Payload(
+            oracle_cloud=OCIVars(
+                tenancy_ocid="ocid1.tenancy.test",
+                user_ocid="ocid1.user.test",
+                fingerprint="test:fingerprint",
+                region="us-test-1",
+                compartment_ocid="ocid1.compartment.test",
+                flex_shape=FlexShape(
+                    shape="VM.Standard.E4.Flex", ocpus=4, memory_gb=16
+                ),
+            ),
+            cloudflare=CloudflareVars(
+                cf_api_token="test_token", cf_account_id="test_account"
+            ),
+            github=GithubVars(
+                github_token="test_token",
+                github_owner="testowner",
+                repo_name="testrepo",
+                docker_image="test_image",
+            ),
+        )
+
+        svc = DeploymentService(directory=tmp_path)
+        result = svc.set_payload(payload_with_flex, Path("key"), Path("key.pub"))
+
+        # Verify custom flex shape is rendered
+        assert 'shape                    = "VM.Standard.E4.Flex"' in result
+        assert 'operating_system_version = "20.04"' in result
+        assert 'shape                    = "VM.Standard.E4.Flex"' in result
+
+    def test_template_error_handling_invalid_template(
+        self, tmp_path, sample_payload, monkeypatch
+    ):
+        """Test error handling when template rendering fails."""
+        svc = DeploymentService(directory=tmp_path)
+
+        # Create a template that will fail to render
+        class _FailingTemplate:
+            def render(self, **kwargs):
+                raise Exception("Template rendering failed")
+
+        monkeypatch.setattr(service_mod, "TEMPLATE", _FailingTemplate(), raising=True)
+
+        priv_key = Path("key")
+        pub_key = Path("key.pub")
+
+        # Verify that the exception is raised
+        with pytest.raises(Exception, match="Template rendering failed"):
+            svc.set_payload(sample_payload, priv_key, pub_key)
