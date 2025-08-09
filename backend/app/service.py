@@ -63,9 +63,7 @@ class DeploymentService:
         rendered_template = get_template().render(**context_data)
         return rendered_template
 
-    def generate_tf_files(
-        self, template_content: str, private_key_path: Path, public_key_path: Path
-    ) -> Path:
+    def generate_tf_files(self, template_content: str, private_key_path: Path) -> Path:
         """Generate Terraform files in the deployment directory."""
         if not self.payload:
             raise ValueError(
@@ -76,7 +74,6 @@ class DeploymentService:
         deploy_private_key = self.directory / "id_rsa"
         deploy_public_key = self.directory / "id_rsa.pub"
 
-        # Copy the private key file
         shutil.copy2(private_key_path, deploy_private_key)
 
         # Generate public key content and write it

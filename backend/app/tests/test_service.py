@@ -180,9 +180,7 @@ class TestDeploymentService:
         private_key_path = tmp_path / "test_private_key"
         private_key_path.write_text("test private key content")
 
-        result = svc.generate_tf_files(
-            template_content, private_key_path, private_key_path
-        )
+        result = svc.generate_tf_files(template_content, private_key_path)
 
         # Verify results
         assert result == tmp_path / "main.tf"

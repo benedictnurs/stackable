@@ -32,6 +32,9 @@ def decode_file(file_path: Path) -> str:
 
 
 def read_file(file_path: Path) -> str:
+    """
+    Read the content of a file, handling private key formatting.
+    """
     try:
         content = file_path.read_text().strip()
 

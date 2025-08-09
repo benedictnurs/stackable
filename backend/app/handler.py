@@ -16,9 +16,7 @@ def run_job(private_key_path: Path, public_key_path: Path, payload_path: Path = 
     rendered_template = deployment_service.set_payload(
         payload, private_key_path, public_key_path
     )
-    deployment_service.generate_tf_files(
-        rendered_template, private_key_path, public_key_path
-    )
+    deployment_service.generate_tf_files(rendered_template, private_key_path)
 
 
 if __name__ == "__main__":
