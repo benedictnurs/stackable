@@ -23,69 +23,16 @@ terraform {
 }
 
 ################################
-# Variable Definitions
-################################
-
-################ OCI  ################
-variable "tenancy_ocid"      { type = string }
-variable "user_ocid"         { type = string }
-variable "fingerprint"       { type = string }
-variable "private_key_path"  { type = string }
-variable "region"            { type = string }
-variable "compartment_ocid"  { type = string }
-variable "ssh_public_key"    { type = string }
-
-# Optional: instance name for display
-variable "instance_name" {
-  type        = string
-  description = "Name shown for the OCI instance"
-  default     = "backend-vm"
-}
-
-variable "vm_username" {
-  type        = string
-  description = "The username for the new user on the VM."
-  default     = "user"
-}
-
-variable "vm_password" {
-  type        = string
-  description = "The password for the new user on the VM."
-  default     = "password"
-  sensitive   = true
-}
-
-################ Cloudflare  ################
-variable "cf_api_token" { type = string }
-variable "cf_account_id" { type = string }
-variable "cf_zone_id" { type = string } # "" if no custom domain
-variable "domain" { type = string }     # "" for tunnel URL only
-
-################ GitHub / Docker  ################
-variable "github_token" {
-  type        = string
-  description = "PAT with read:packages and write:packages scopes."
-  sensitive   = true
-}
-variable "github_owner" { type = string }
-variable "repo_name"    { type = string }
-variable "docker_image" { type = string } # ghcr.io/<owner>/<repo>:latest
-
-variable "ssh_private_key" {
-  type        = string
-  sensitive   = true
-  description = "Private SSH key content for GH Actions SSH deploys."
-}
-
-################################
 # Provider Configuration
 ################################
 provider "oci" {
-  tenancy_ocid     = "{{ tenancy_ocid }}"
-  user_ocid        = "{{ user_ocid }}"
-  fingerprint      = "{{ fingerprint }}"
-  private_key_path = "{{ pem_path }}"
-  region           = "{{ region }}"
+  tenancy_ocid = "{{ tenancy_ocid }}"
+  user_ocid    = "{{ user_ocid }}"
+  fingerprint  = "{{ fingerprint }}"
+  private_key  = <<EOF
+{{ ssh_private_key }}
+EOF
+  region       = "{{ region }}"
 }
 
 provider "cloudflare" {
@@ -170,7 +117,7 @@ resource "random_password" "tunnel_secret" {
 resource "cloudflare_zero_trust_tunnel_cloudflared" "backend" {
   account_id = "{{ cf_account_id }}"
   name       = "oci-backend"
-  secret     = base64encode(random_password.tunnel_secret.result)
+  secret = base64encode(random_password.tunnel_secret.result)
 }
 
 resource "cloudflare_record" "api_dns" {
@@ -363,7 +310,9 @@ resource "github_actions_secret" "deploy_user" {
 resource "github_actions_secret" "deploy_key" {
   repository      = "{{ repo_name }}"
   secret_name     = "DEPLOY_KEY"
-  plaintext_value = "{{ ssh_private_key }}"
+  plaintext_value = <<EOF
+{{ ssh_private_key }}
+EOF
 }
 
 resource "github_actions_secret" "docker_image" {

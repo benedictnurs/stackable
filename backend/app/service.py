@@ -5,10 +5,12 @@ from jinja2 import Environment, FileSystemLoader
 from .utils.file_extract import decode_file, read_file
 
 
-TEMPLATE = Environment(
-    loader=FileSystemLoader(Path(__file__).parent.parent / "terraform"),
-    autoescape=False,
-).get_template("oracle_template.tf.j2")
+def get_template():
+    """Load the template dynamically to avoid caching issues."""
+    return Environment(
+        loader=FileSystemLoader(Path(__file__).parent.parent / "terraform"),
+        autoescape=False,
+    ).get_template("oracle_template.tf.j2")
 
 
 class DeploymentService:
@@ -58,12 +60,44 @@ class DeploymentService:
             }
         )
 
-        rendered_template = TEMPLATE.render(**context_data)
+        rendered_template = get_template().render(**context_data)
         return rendered_template
 
-    def generate_tf_files(self):
-        # Logic to generate Terraform files
-        pass
+    def generate_tf_files(
+        self, template_content: str, private_key_path: Path, public_key_path: Path
+    ) -> Path:
+        """Generate Terraform files in the deployment directory."""
+        if not self.payload:
+            raise ValueError(
+                "Payload must be set before generating Terraform files. Call set_payload() first."
+            )
+
+        # Create deployment directory if it doesn't exist
+        self.directory.mkdir(parents=True, exist_ok=True)
+
+        # Copy SSH keys to deployment directory
+        deploy_private_key = self.directory / "id_rsa"
+        deploy_public_key = self.directory / "id_rsa.pub"
+
+        # Copy the private key file
+        shutil.copy2(private_key_path, deploy_private_key)
+
+        # Generate public key content and write it
+        public_key_content = decode_file(private_key_path)
+        with open(deploy_public_key, "w") as f:
+            f.write(public_key_content)
+
+        # Set proper permissions on the private key
+        deploy_private_key.chmod(0o600)
+        deploy_public_key.chmod(0o644)
+
+        # Generate the main Terraform configuration file
+        tf_file_path = self.directory / "main.tf"
+
+        with open(tf_file_path, "w") as f:
+            f.write(str(template_content))
+
+        return tf_file_path
 
     def deploy(self):
         # Logic to deploy using the provided variables
