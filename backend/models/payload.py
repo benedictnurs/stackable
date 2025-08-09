@@ -1,8 +1,8 @@
 from pydantic import BaseModel
 from typing import Optional
-from backend.models.github_vars import GithubVars
-from backend.models.cloudflare_vars import CloudflareVars
-from backend.models.oracle_cloud_config import OCIVars
+from .github_vars import GithubVars
+from .cloudflare_vars import CloudflareVars
+from .oracle_cloud_config import OCIVars
 
 
 class Payload(BaseModel):
