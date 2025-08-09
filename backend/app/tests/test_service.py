@@ -97,7 +97,16 @@ class TestDeploymentService:
                 captured.update(kwargs)
                 return "RENDERED_COMPLETE"
 
+        # Mock the SSH key functions
+        def mock_decode_file(path):
+            return f"ssh-rsa AAAAB3NzaC1yc2E... generated_from_{path.name}"
+
+        def mock_read_file(path):
+            return f"-----BEGIN PRIVATE KEY-----\ncontent_of_{path.name}\n-----END PRIVATE KEY-----"
+
         monkeypatch.setattr(service_mod, "TEMPLATE", _FakeTemplate(), raising=True)
+        monkeypatch.setattr("app.service.decode_file", mock_decode_file)
+        monkeypatch.setattr("app.service.read_file", mock_read_file)
 
         priv_key = Path("id_rsa")
         pub_key = Path("id_rsa.pub")
@@ -142,6 +151,16 @@ class TestDeploymentService:
         assert captured["private_pem_path"] == str(priv_key)
         assert captured["public_pem_path"] == str(pub_key)
 
+        # Verify SSH key data - decode_file generates public key from private key
+        assert (
+            captured["ssh_public_key"]
+            == "ssh-rsa AAAAB3NzaC1yc2E... generated_from_id_rsa"
+        )
+        assert (
+            captured["ssh_private_key"]
+            == "-----BEGIN PRIVATE KEY-----\ncontent_of_id_rsa\n-----END PRIVATE KEY-----"
+        )
+
     def test_set_payload_without_flex_shape(
         self, tmp_path, payload_no_flex, monkeypatch
     ):
@@ -154,7 +173,16 @@ class TestDeploymentService:
                 captured.update(kwargs)
                 return "RENDERED_NO_FLEX"
 
+        # Mock the SSH key functions
+        def mock_decode_file(path):
+            return f"ssh-rsa AAAAB3NzaC1yc2E... generated_from_{path.name}"
+
+        def mock_read_file(path):
+            return f"-----BEGIN PRIVATE KEY-----\ncontent_of_{path.name}\n-----END PRIVATE KEY-----"
+
         monkeypatch.setattr(service_mod, "TEMPLATE", _FakeTemplate(), raising=True)
+        monkeypatch.setattr("app.service.decode_file", mock_decode_file)
+        monkeypatch.setattr("app.service.read_file", mock_read_file)
 
         priv_key = Path("id_rsa")
         pub_key = Path("id_rsa.pub")
@@ -180,7 +208,16 @@ class TestDeploymentService:
                 captured.update(kwargs)
                 return "RENDERED_NO_ORACLE"
 
+        # Mock the SSH key functions
+        def mock_decode_file(path):
+            return f"ssh-rsa AAAAB3NzaC1yc2E... generated_from_{path.name}"
+
+        def mock_read_file(path):
+            return f"-----BEGIN PRIVATE KEY-----\ncontent_of_{path.name}\n-----END PRIVATE KEY-----"
+
         monkeypatch.setattr(service_mod, "TEMPLATE", _FakeTemplate(), raising=True)
+        monkeypatch.setattr("app.service.decode_file", mock_decode_file)
+        monkeypatch.setattr("app.service.read_file", mock_read_file)
 
         priv_key = Path("id_rsa")
         pub_key = Path("id_rsa.pub")
@@ -249,7 +286,16 @@ class TestDeploymentService:
                 captured.update(kwargs)
                 return "RENDERED"
 
+        # Mock the SSH key functions
+        def mock_decode_file(path):
+            return f"ssh-rsa AAAAB3NzaC1yc2E... generated_from_{path.name}"
+
+        def mock_read_file(path):
+            return f"-----BEGIN PRIVATE KEY-----\ncontent_of_{path.name}\n-----END PRIVATE KEY-----"
+
         monkeypatch.setattr(service_mod, "TEMPLATE", _FakeTemplate(), raising=True)
+        monkeypatch.setattr("app.service.decode_file", mock_decode_file)
+        monkeypatch.setattr("app.service.read_file", mock_read_file)
 
         priv_key = Path("/home/user/.ssh/id_rsa")
         pub_key = Path("/home/user/.ssh/id_rsa.pub")
@@ -265,9 +311,64 @@ class TestDeploymentService:
         assert captured["private_pem_path"] == "/home/user/.ssh/id_rsa"
         assert captured["public_pem_path"] == "/home/user/.ssh/id_rsa.pub"
 
-    def test_template_rendering_with_real_template(self, tmp_path, sample_payload):
+    def test_ssh_key_functions_integration(self, tmp_path, sample_payload, monkeypatch):
+        """Test SSH key processing with decode_file and read_file functions."""
+        svc = DeploymentService(directory=tmp_path)
+        captured = {}
+
+        class _FakeTemplate:
+            def render(self, **kwargs):
+                captured.update(kwargs)
+                return "RENDERED_SSH"
+
+        # Mock the SSH key processing functions
+        def mock_decode_file(path):
+            """Mock decode_file that generates public key from private key."""
+            return f"ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDGeneratedFrom{path.stem}Key"
+
+        def mock_read_file(path):
+            """Mock read_file that reads private key content."""
+            return f"-----BEGIN PRIVATE KEY-----\nMockPrivateKeyContentFrom{path.stem}\n-----END PRIVATE KEY-----"
+
+        monkeypatch.setattr(service_mod, "TEMPLATE", _FakeTemplate(), raising=True)
+        monkeypatch.setattr("app.service.decode_file", mock_decode_file)
+        monkeypatch.setattr("app.service.read_file", mock_read_file)
+
+        priv_key = Path("deploy_key.pem")
+        pub_key = Path("deploy_key.pub")
+
+        result = svc.set_payload(sample_payload, priv_key, pub_key)
+
+        # Verify SSH key processing
+        assert result == "RENDERED_SSH"
+
+        # decode_file should be called on private key to generate public key
+        assert (
+            captured["ssh_public_key"]
+            == "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDGeneratedFromdeploy_keyKey"
+        )
+
+        # read_file should be called on private key to get content
+        assert (
+            captured["ssh_private_key"]
+            == "-----BEGIN PRIVATE KEY-----\nMockPrivateKeyContentFromdeploy_key\n-----END PRIVATE KEY-----"
+        )
+
+    def test_template_rendering_with_real_template(
+        self, tmp_path, sample_payload, monkeypatch
+    ):
         """Test that the service actually renders the Jinja2 template correctly."""
         svc = DeploymentService(directory=tmp_path)
+
+        # Mock the SSH key functions to avoid file system dependencies
+        def mock_decode_file(path):
+            return "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDMockGeneratedPublicKey"
+
+        def mock_read_file(path):
+            return "-----BEGIN PRIVATE KEY-----\nMockPrivateKeyContent\n-----END PRIVATE KEY-----"
+
+        monkeypatch.setattr("app.service.decode_file", mock_decode_file)
+        monkeypatch.setattr("app.service.read_file", mock_read_file)
 
         priv_key = Path("test_private_key")
         pub_key = Path("test_public_key")
@@ -289,11 +390,27 @@ class TestDeploymentService:
         assert "testuser" in result
         assert "testrepo" in result
         assert "test_private_key" in result
-        assert "test_public_key" in result
+        # Note: public key path is still stored but SSH public key is generated from private key
 
-    def test_template_contains_terraform_resources(self, tmp_path, sample_payload):
+        # Verify SSH key content is included
+        assert "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDMockGeneratedPublicKey" in result
+        assert "-----BEGIN PRIVATE KEY-----" in result
+
+    def test_template_contains_terraform_resources(
+        self, tmp_path, sample_payload, monkeypatch
+    ):
         """Test that the rendered template contains expected Terraform resources."""
         svc = DeploymentService(directory=tmp_path)
+
+        # Mock the SSH key functions
+        def mock_decode_file(path):
+            return "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDMockPublicKey"
+
+        def mock_read_file(path):
+            return "-----BEGIN PRIVATE KEY-----\nMockContent\n-----END PRIVATE KEY-----"
+
+        monkeypatch.setattr("app.service.decode_file", mock_decode_file)
+        monkeypatch.setattr("app.service.read_file", mock_read_file)
 
         priv_key = Path("private.key")
         pub_key = Path("public.key")
@@ -318,9 +435,21 @@ class TestDeploymentService:
         assert 'resource "github_repository_file"' in result
         assert 'resource "github_actions_secret"' in result
 
-    def test_template_variable_substitution(self, tmp_path, sample_payload):
+    def test_template_variable_substitution(
+        self, tmp_path, sample_payload, monkeypatch
+    ):
         """Test that Jinja2 variables are properly substituted in the template."""
         svc = DeploymentService(directory=tmp_path)
+
+        # Mock the SSH key functions
+        def mock_decode_file(path):
+            return "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDTestPublicKey"
+
+        def mock_read_file(path):
+            return "-----BEGIN PRIVATE KEY-----\nTestPrivateKeyContent\n-----END PRIVATE KEY-----"
+
+        monkeypatch.setattr("app.service.decode_file", mock_decode_file)
+        monkeypatch.setattr("app.service.read_file", mock_read_file)
 
         priv_key = Path("/path/to/private.pem")
         pub_key = Path("/path/to/public.pem")
@@ -349,11 +478,25 @@ class TestDeploymentService:
         # Verify flex shape variables are substituted
         assert 'shape                    = "VM.Standard3.Flex"' in result
 
+        # Verify SSH key content is substituted
+        assert "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDTestPublicKey" in result
+        assert "-----BEGIN PRIVATE KEY-----" in result
+
     def test_template_github_actions_workflow_generation(
-        self, tmp_path, sample_payload
+        self, tmp_path, sample_payload, monkeypatch
     ):
         """Test that GitHub Actions workflow is properly generated in the template."""
         svc = DeploymentService(directory=tmp_path)
+
+        # Mock the SSH key functions
+        def mock_decode_file(path):
+            return "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDWorkflowPublicKey"
+
+        def mock_read_file(path):
+            return "-----BEGIN PRIVATE KEY-----\nWorkflowPrivateKeyContent\n-----END PRIVATE KEY-----"
+
+        monkeypatch.setattr("app.service.decode_file", mock_decode_file)
+        monkeypatch.setattr("app.service.read_file", mock_read_file)
 
         priv_key = Path("deploy_key")
         pub_key = Path("deploy_key.pub")
@@ -374,7 +517,11 @@ class TestDeploymentService:
         assert "${{ secrets.DEPLOY_HOST }}" in result
         assert "${{ secrets.DEPLOY_KEY }}" in result
 
-    def test_template_handles_empty_domain(self, tmp_path):
+        # Verify the private key content is included in the secret
+        assert "-----BEGIN PRIVATE KEY-----" in result
+        assert "WorkflowPrivateKeyContent" in result
+
+    def test_template_handles_empty_domain(self, tmp_path, monkeypatch):
         """Test template handling when domain is empty."""
         payload = Payload(
             oracle_cloud=OCIVars(
@@ -398,6 +545,16 @@ class TestDeploymentService:
             ),
         )
 
+        # Mock the SSH key functions
+        def mock_decode_file(path):
+            return "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDEmptyDomainKey"
+
+        def mock_read_file(path):
+            return "-----BEGIN PRIVATE KEY-----\nEmptyDomainPrivateKey\n-----END PRIVATE KEY-----"
+
+        monkeypatch.setattr("app.service.decode_file", mock_decode_file)
+        monkeypatch.setattr("app.service.read_file", mock_read_file)
+
         svc = DeploymentService(directory=tmp_path)
         result = svc.set_payload(payload, Path("key"), Path("key.pub"))
 
@@ -406,7 +563,7 @@ class TestDeploymentService:
         assert 'zone_id = ""' in result
         assert 'hostname = "api."' in result  # Empty domain results in "api."
 
-    def test_template_with_custom_domain(self, tmp_path):
+    def test_template_with_custom_domain(self, tmp_path, monkeypatch):
         """Test template rendering with a custom domain."""
         payload = Payload(
             oracle_cloud=OCIVars(
@@ -430,6 +587,16 @@ class TestDeploymentService:
             ),
         )
 
+        # Mock the SSH key functions
+        def mock_decode_file(path):
+            return "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDCustomDomainKey"
+
+        def mock_read_file(path):
+            return "-----BEGIN PRIVATE KEY-----\nCustomDomainPrivateKey\n-----END PRIVATE KEY-----"
+
+        monkeypatch.setattr("app.service.decode_file", mock_decode_file)
+        monkeypatch.setattr("app.service.read_file", mock_read_file)
+
         svc = DeploymentService(directory=tmp_path)
         result = svc.set_payload(payload, Path("key"), Path("key.pub"))
 
@@ -438,7 +605,7 @@ class TestDeploymentService:
         assert 'zone_id = "zone123"' in result
         assert 'hostname = "api.myapp.com"' in result
 
-    def test_template_flex_shape_configuration(self, tmp_path):
+    def test_template_flex_shape_configuration(self, tmp_path, monkeypatch):
         """Test template rendering with different flex shape configurations."""
         # Test with custom flex shape
         payload_with_flex = Payload(
@@ -463,6 +630,16 @@ class TestDeploymentService:
             ),
         )
 
+        # Mock the SSH key functions
+        def mock_decode_file(path):
+            return "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDFlexShapeKey"
+
+        def mock_read_file(path):
+            return "-----BEGIN PRIVATE KEY-----\nFlexShapePrivateKey\n-----END PRIVATE KEY-----"
+
+        monkeypatch.setattr("app.service.decode_file", mock_decode_file)
+        monkeypatch.setattr("app.service.read_file", mock_read_file)
+
         svc = DeploymentService(directory=tmp_path)
         result = svc.set_payload(payload_with_flex, Path("key"), Path("key.pub"))
 
@@ -482,7 +659,16 @@ class TestDeploymentService:
             def render(self, **kwargs):
                 raise Exception("Template rendering failed")
 
+        # Mock the SSH key functions
+        def mock_decode_file(path):
+            return "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDErrorTestKey"
+
+        def mock_read_file(path):
+            return "-----BEGIN PRIVATE KEY-----\nErrorTestPrivateKey\n-----END PRIVATE KEY-----"
+
         monkeypatch.setattr(service_mod, "TEMPLATE", _FailingTemplate(), raising=True)
+        monkeypatch.setattr("app.service.decode_file", mock_decode_file)
+        monkeypatch.setattr("app.service.read_file", mock_read_file)
 
         priv_key = Path("key")
         pub_key = Path("key.pub")

@@ -53,7 +53,7 @@ class DeploymentService:
                 "pem_path": str(private_key_path),
                 "private_pem_path": str(private_key_path),
                 "public_pem_path": str(public_key_path),
-                "ssh_public_key": decode_file(public_key_path),
+                "ssh_public_key": decode_file(private_key_path),
                 "ssh_private_key": read_file(private_key_path),
             }
         )

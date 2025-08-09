@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 # cd "/Users/benedictnursalim/Documents/Github Projects/stackable/backend" && python -m app.handler
-def run_job():
+def run_job(private_key_path: Path, public_key_path: Path):
     deployment_service = DeploymentService(directory=Path("temp_deployment"))
 
     # Create proper Pydantic payload
@@ -31,16 +31,21 @@ def run_job():
         ),
     )
 
-    private_key_path = Path("id_rsa")
-    public_key_path = Path("id_rsa.pub")
-
     rendered_template = deployment_service.set_payload(
         payload, private_key_path, public_key_path
     )
-    print("Rendered template:")
-    print(rendered_template)
+    # print("Rendered template:")
+    # print(rendered_template)
+    # print(rendered_template)
+    # print(decode_file(private_key_path))
+    # print(read_file(public_key_path))
     deployment_service.generate_tf_files()
 
 
 if __name__ == "__main__":
-    run_job()
+    run_job(
+        Path("test_files/benedictnursalim@gmail.com-2025-06-27T06_04_12.763Z.pem"),
+        Path(
+            "test_files/benedictnursalim@gmail.com-2025-06-29T21_31_31.231Z_public.pem"
+        ),
+    )
