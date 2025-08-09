@@ -8,10 +8,7 @@ def decode_file(file_path: Path) -> str:
     Generate public key from private key file using ssh-keygen
     """
     try:
-        # First, set proper permissions on the private key file
         os.chmod(file_path, 0o600)
-
-        # Generate public key from private key using ssh-keygen
         result = subprocess.run(
             ["ssh-keygen", "-y", "-f", str(file_path)],
             capture_output=True,
