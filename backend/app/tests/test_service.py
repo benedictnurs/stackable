@@ -2,10 +2,10 @@ import pytest
 from pathlib import Path
 from app.service import DeploymentService
 import app.service as service_mod
-from models.payload import Payload
-from models.oracle_cloud_config import OCIVars, FlexShape
-from models.cloudflare_vars import CloudflareVars
-from models.github_vars import GithubVars
+from app.models.payload import Payload
+from app.models.oracle_cloud_config import OCIVars, FlexShape
+from app.models.cloudflare_vars import CloudflareVars
+from app.models.github_vars import GithubVars
 
 
 @pytest.fixture

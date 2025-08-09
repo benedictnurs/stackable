@@ -1,7 +1,8 @@
-from service import DeploymentService
+from app.service import DeploymentService
 from pathlib import Path
 
 
+# python -m app.handler
 def run_job():
     deployment_service = DeploymentService(directory=Path("path/to/directory"))
     payload = {
@@ -21,3 +22,6 @@ def run_job():
     )
     print(rendered_template)
     deployment_service.generate_tf_files()
+
+
+run_job()

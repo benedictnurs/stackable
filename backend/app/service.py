@@ -1,5 +1,9 @@
 import shutil
-from models.payload import Payload
+
+try:
+    from .models.payload import Payload
+except ImportError:
+    from models.payload import Payload
 from pathlib import Path
 from jinja2 import Environment, FileSystemLoader
 
