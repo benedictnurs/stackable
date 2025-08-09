@@ -74,7 +74,9 @@ class DeploymentService:
         deploy_private_key = self.directory / "id_rsa"
         deploy_public_key = self.directory / "id_rsa.pub"
 
-        shutil.copy2(private_key_path, deploy_private_key)
+        private_key_content = read_file(private_key_path)
+        with open(deploy_private_key, "w") as f:
+            f.write(private_key_content)
 
         # Generate public key content and write it
         public_key_content = decode_file(private_key_path)
