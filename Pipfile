@@ -4,16 +4,8 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
-pydantic = "*"
-pathlib = "*"
-jinja2 = "*"
 
 [dev-packages]
-black = "*"
-pre-commit = "*"
-ruff = "*"
-pytest = "*"
-pytest-mock = "*"
 
 [requires]
 python_version = "3.13"

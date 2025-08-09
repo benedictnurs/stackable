@@ -19,3 +19,19 @@ pipenv shell
 ```
 
 This ensures you're using the correct dependencies and Python version for development.
+
+### Testing
+
+We use pytest for testing our application. Run the tests with:
+
+```bash
+pipenv run pytest -q
+```
+
+Our test suite covers:
+- API endpoints functionality
+- Database operations
+- Authentication mechanisms
+- Business logic validation
+
+When writing new features, please ensure you add appropriate tests to maintain code quality and prevent regressions.
