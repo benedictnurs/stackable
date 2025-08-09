@@ -1,6 +1,5 @@
 import json
 from pathlib import Path
-import time
 
 from app.service import DeploymentService
 from app.models.payload import Payload
@@ -16,10 +15,20 @@ def run_job(private_key_path: Path, public_key_path: Path, payload_path: Path = 
             payload_data = json.load(f)
         payload = Payload(**payload_data)
 
-    rendered_template = deployment_service.set_payload(
-        payload, private_key_path, public_key_path
+    templates = deployment_service.set_payload(
+        payload, private_key_path, public_key_path, provider="oracle"
     )
-    deployment_service.generate_tf_files(rendered_template, private_key_path)
+
+    rendered_template = templates[0]
+    provider_template = templates[1]
+
+    deployment_service.generate_tf_files(
+        rendered_template, private_key_path, file_name="main.tf"
+    )
+    deployment_service.generate_tf_files(
+        provider_template, private_key_path, file_name="provider.tf"
+    )
+
     return deployment_service
 
 
@@ -32,7 +41,7 @@ if __name__ == "__main__":
         Path("test_files/payload.json"),
     )
     print(f"Terraform files generated in: {build_job.directory}")
-    print("Waiting 5 seconds before cleanup...")
-    time.sleep(5)
-    build_job.cleanup()
-    print("Cleanup completed.")
+    # print("Waiting 5 seconds before cleanup...")
+    # time.sleep(5)
+    # build_job.cleanup()
+    # print("Cleanup completed.")

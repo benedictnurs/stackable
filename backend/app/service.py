@@ -5,12 +5,22 @@ from jinja2 import Environment, FileSystemLoader
 from .utils.file_extract import decode_file, read_file
 
 
-def get_template():
+def build_template():
     """Load the template dynamically to avoid caching issues."""
     return Environment(
-        loader=FileSystemLoader(Path(__file__).parent.parent / "terraform_templates"),
+        loader=FileSystemLoader(Path(__file__).parents[1] / "terraform_templates"),
         autoescape=False,
-    ).get_template("oracle_template.tf.j2")
+    ).get_template("main.tf.j2")
+
+
+def build_provider(provider_name: str):
+    """Dynamically build provider configuration based on provider name."""
+    return Environment(
+        loader=FileSystemLoader(
+            Path(__file__).parents[1] / "terraform_templates" / "providers"
+        ),
+        autoescape=False,
+    ).get_template(f"{provider_name}_template.tf.j2")
 
 
 class DeploymentService:
@@ -19,7 +29,11 @@ class DeploymentService:
         self.payload = None
 
     def set_payload(
-        self, payload: Payload, private_key_path: Path, public_key_path: Path
+        self,
+        payload: Payload,
+        private_key_path: Path,
+        public_key_path: Path,
+        provider: str = None,
     ) -> str:
         self.payload = payload
         context_data = {}
@@ -60,10 +74,14 @@ class DeploymentService:
             }
         )
 
-        rendered_template = get_template().render(**context_data)
-        return rendered_template
+        rendered_template = build_template().render(**context_data)
+        provider_template = build_provider(provider).render(**context_data)
 
-    def generate_tf_files(self, template_content: str, private_key_path: Path) -> Path:
+        return rendered_template, provider_template
+
+    def generate_tf_files(
+        self, template_content: str, private_key_path: Path, file_name: str
+    ) -> Path:
         """Generate Terraform files in the deployment directory."""
         if not self.payload:
             raise ValueError(
@@ -74,6 +92,7 @@ class DeploymentService:
         deploy_private_key = self.directory / "id_rsa"
         deploy_public_key = self.directory / "id_rsa.pub"
 
+        # Generate private key content and write it
         private_key_content = read_file(private_key_path)
         with open(deploy_private_key, "w") as f:
             f.write(private_key_content)
@@ -88,7 +107,7 @@ class DeploymentService:
         deploy_public_key.chmod(0o644)
 
         # Generate the main Terraform configuration file
-        tf_file_path = self.directory / "main.tf"
+        tf_file_path = self.directory / file_name
 
         with open(tf_file_path, "w") as f:
             f.write(str(template_content))
