@@ -33,7 +33,17 @@ def decode_file(file_path: Path) -> str:
 
 def read_file(file_path: Path) -> str:
     try:
-        return file_path.read_text().strip()
+        content = file_path.read_text().strip()
+
+        if (
+            "-----BEGIN PRIVATE KEY-----" in content
+            and "-----END PRIVATE KEY-----" in content
+        ):
+            end_marker = "-----END PRIVATE KEY-----"
+            end_index = content.find(end_marker) + len(end_marker)
+            content = content[:end_index]
+
+        return content
     except FileNotFoundError:
         return f"# SSH key content from {file_path}"
     except Exception as e:

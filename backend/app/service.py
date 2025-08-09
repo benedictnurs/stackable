@@ -72,10 +72,7 @@ class DeploymentService:
                 "Payload must be set before generating Terraform files. Call set_payload() first."
             )
 
-        # Create deployment directory if it doesn't exist
         self.directory.mkdir(parents=True, exist_ok=True)
-
-        # Copy SSH keys to deployment directory
         deploy_private_key = self.directory / "id_rsa"
         deploy_public_key = self.directory / "id_rsa.pub"
 
