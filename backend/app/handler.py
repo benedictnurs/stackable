@@ -1,9 +1,10 @@
 import json
+from pathlib import Path
+import time
+
 from app.service import DeploymentService
 from app.models.payload import Payload
-from pathlib import Path
 from app.utils.make_directory import make_directory
-import time
 
 
 # cd "/Users/benedictnursalim/Documents/Github Projects/stackable/backend" && python -m app.handler

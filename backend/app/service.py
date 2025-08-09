@@ -8,7 +8,7 @@ from .utils.file_extract import decode_file, read_file
 def get_template():
     """Load the template dynamically to avoid caching issues."""
     return Environment(
-        loader=FileSystemLoader(Path(__file__).parent.parent / "terraform"),
+        loader=FileSystemLoader(Path(__file__).parent.parent / "terraform_templates"),
         autoescape=False,
     ).get_template("oracle_template.tf.j2")
 
