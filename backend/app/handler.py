@@ -45,7 +45,7 @@ if __name__ == "__main__":
         "oracle",
     )
     print(f"Terraform files generated in: {build_job.directory}")
-    print("Waiting 5 seconds before cleanup...")
-    time.sleep(5)
+    print("Waiting 10 seconds before cleanup...")
+    time.sleep(10)
     build_job.cleanup()
     print("Cleanup completed.")

@@ -2,7 +2,7 @@ import shutil
 from .models.payload import Payload
 from pathlib import Path
 from .utils.file_extraction import decode_file, read_file
-from .utils.build_terraform_templates import build_template, build_provider
+from .utils.build_template import build_template
 
 
 class DeploymentService:
@@ -57,7 +57,7 @@ class DeploymentService:
         )
 
         rendered_template = build_template().render(**context_data)
-        provider_template = build_provider(provider).render(**context_data)
+        provider_template = build_template(provider).render(**context_data)
 
         return rendered_template, provider_template
 

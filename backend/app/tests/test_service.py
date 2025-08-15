@@ -32,14 +32,10 @@ def mock_template(monkeypatch):
             captured.update(kwargs)
             return f"RENDERED_{len(kwargs)}_VARS"
 
-    def mock_build_template():
-        return _FakeTemplate()
-
-    def mock_build_provider(provider_name):
+    def mock_build_template(provider=None):
         return _FakeTemplate()
 
     monkeypatch.setattr("app.service.build_template", mock_build_template)
-    monkeypatch.setattr("app.service.build_provider", mock_build_provider)
     return captured
 
 
