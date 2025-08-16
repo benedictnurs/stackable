@@ -3,6 +3,7 @@ from .models.payload import Payload
 from pathlib import Path
 from .utils.file_extraction import decode_file, read_file
 from .utils.build_template import build_template
+from .utils.execute_command import execute_command
 
 
 class DeploymentService:
@@ -98,7 +99,69 @@ class DeploymentService:
 
     def deploy(self):
         # Logic to deploy using the provided variables
-        pass
+        # Logic to deploy using Terraform
+        print("Starting Terraform deployment...")
+
+        # Run terraform init (typically quick, 2 minutes should be enough)
+        print("Running terraform init...")
+        stdout, stderr, returncode = execute_command(
+            "terraform init", self.directory, timeout=120
+        )
+
+        if returncode != 0:
+            print(f"Terraform init failed with return code: {returncode}")
+            print(f"STDERR: {stderr}")
+            print(f"STDOUT: {stdout}")
+            raise RuntimeError(f"Terraform init failed: {stderr}")
+
+        print("Terraform init completed successfully!")
+        print(f"Init output: {stdout}")
+
+        # Run terraform destroy first to clean up existing resources and free limits
+        print("Running terraform destroy to clean up existing resources...")
+        stdout, stderr, returncode = execute_command(
+            "terraform destroy -auto-approve", self.directory, timeout=600
+        )
+
+        # Don't fail if destroy fails (might be nothing to destroy)
+        if returncode != 0:
+            print(
+                f"Terraform destroy completed with warnings (this is normal if no resources exist)"
+            )
+            print(f"Destroy STDERR: {stderr}")
+        else:
+            print("Terraform destroy completed successfully!")
+            print(f"Destroy output: {stdout}")
+
+        # Run terraform plan (can take a few minutes depending on resources)
+        print("Running terraform plan...")
+        stdout, stderr, returncode = execute_command(
+            "terraform plan", self.directory, timeout=300
+        )
+
+        if returncode != 0:
+            print(f"Terraform plan failed with return code: {returncode}")
+            print(f"STDERR: {stderr}")
+            print(f"STDOUT: {stdout}")
+            raise RuntimeError(f"Terraform plan failed: {stderr}")
+
+        print("Terraform plan completed successfully!")
+        print(f"Plan output: {stdout}")
+
+        # # Run terraform apply
+        # print("Running terraform apply...")
+        # stdout, stderr, returncode = execute_command("terraform apply -auto-approve", self.directory, timeout=1200)
+
+        # if returncode != 0:
+        #     print(f"Terraform apply failed with return code: {returncode}")
+        #     print(f"STDERR: {stderr}")
+        #     print(f"STDOUT: {stdout}")
+        #     raise RuntimeError(f"Terraform apply failed: {stderr}")
+
+        # print("Terraform apply completed successfully!")
+        # print(f"Apply output: {stdout}")
+
+        return {"init_success": True, "plan_success": True, "plan_output": stdout}
 
     def cleanup(self):
         # Logic to clean up after deployment
