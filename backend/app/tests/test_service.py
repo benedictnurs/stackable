@@ -32,10 +32,10 @@ def mock_template(monkeypatch):
             captured.update(kwargs)
             return f"RENDERED_{len(kwargs)}_VARS"
 
-    def mock_get_template():
+    def mock_build_template(provider=None):
         return _FakeTemplate()
 
-    monkeypatch.setattr("app.service.get_template", mock_get_template)
+    monkeypatch.setattr("app.service.build_template", mock_build_template)
     return captured
 
 
@@ -84,10 +84,16 @@ class TestDeploymentService:
         svc = DeploymentService(directory=tmp_path)
         captured = mock_template
 
-        result = svc.set_payload(sample_payload, Path("id_rsa"), Path("id_rsa.pub"))
+        result = svc.set_payload(
+            sample_payload, Path("id_rsa"), Path("id_rsa.pub"), "oracle"
+        )
 
-        # Verify return value and payload storage
-        assert result.startswith("RENDERED_")
+        # Verify return value and payload storage - now returns a tuple
+        if isinstance(result, tuple):
+            template_result, provider_result = result
+            assert template_result.startswith("RENDERED_")
+        else:
+            assert result.startswith("RENDERED_")
         assert svc.payload is sample_payload
 
         # Verify key data is present
@@ -123,7 +129,7 @@ class TestDeploymentService:
         svc = DeploymentService(directory=tmp_path)
         captured = mock_template
 
-        svc.set_payload(payload, Path("key"), Path("key.pub"))
+        svc.set_payload(payload, Path("key"), Path("key.pub"), "oracle")
 
         # Verify default flex shape values are used
         assert captured["flex"]["shape"] == "VM.Standard.E2.1.Micro"
@@ -149,7 +155,7 @@ class TestDeploymentService:
         svc = DeploymentService(directory=tmp_path)
         captured = mock_template
 
-        svc.set_payload(payload, Path("key"), Path("key.pub"))
+        svc.set_payload(payload, Path("key"), Path("key.pub"), "oracle")
 
         # Oracle Cloud and flex fields should not be in context
         oracle_fields = [
@@ -172,15 +178,21 @@ class TestDeploymentService:
         svc = DeploymentService(directory=tmp_path)
 
         # Set payload and get template content
-        template_content = svc.set_payload(
-            sample_payload, Path("private_key"), Path("public_key")
+        result = svc.set_payload(
+            sample_payload, Path("private_key"), Path("public_key"), "oracle"
         )
+
+        # Handle tuple return from set_payload
+        if isinstance(result, tuple):
+            template_content, _ = result
+        else:
+            template_content = result
 
         # Create temp SSH key files
         private_key_path = tmp_path / "test_private_key"
         private_key_path.write_text("test private key content")
 
-        result = svc.generate_tf_files(template_content, private_key_path)
+        result = svc.generate_tf_files(template_content, private_key_path, "main.tf")
 
         # Verify results
         assert result == tmp_path / "main.tf"
@@ -206,10 +218,19 @@ class TestDeploymentService:
     ):
         """Test actual template rendering with real Jinja2 template."""
         svc = DeploymentService(directory=tmp_path)
-        result = svc.set_payload(sample_payload, Path("test_key"), Path("test_key.pub"))
+        result = svc.set_payload(
+            sample_payload, Path("test_key"), Path("test_key.pub"), "oracle"
+        )
 
-        # Verify template was rendered with expected content
-        assert isinstance(result, str) and len(result) > 0
+        # Handle tuple return from set_payload
+        if isinstance(result, tuple):
+            template_result, provider_result = result
+            # Check that we have actual template content, not just our mock result
+            assert isinstance(template_result, str) and len(template_result) > 0
+            content_to_check = template_result
+        else:
+            assert isinstance(result, str) and len(result) > 0
+            content_to_check = result
 
         # Check key template elements are present
         expected_content = [
@@ -226,7 +247,7 @@ class TestDeploymentService:
             "ssh-rsa AAAAB3NzaC1yc2E...test_key",
         ]
         for content in expected_content:
-            assert content in result
+            assert content in content_to_check
 
     def test_template_domain_handling(self, tmp_path, mock_ssh_keys):
         """Test template rendering with different domain configurations."""
@@ -251,9 +272,19 @@ class TestDeploymentService:
         )
 
         svc = DeploymentService(directory=tmp_path)
-        result = svc.set_payload(empty_domain_payload, Path("key"), Path("key.pub"))
-        assert 'count   = "" == "" ? 0 : 1' in result
-        assert 'hostname = "api."' in result
+        result = svc.set_payload(
+            empty_domain_payload, Path("key"), Path("key.pub"), "oracle"
+        )
+
+        # Handle tuple return from set_payload
+        if isinstance(result, tuple):
+            template_result, provider_result = result
+            content_to_check = template_result
+        else:
+            content_to_check = result
+
+        assert 'count   = "" == "" ? 0 : 1' in content_to_check
+        assert 'hostname = "api."' in content_to_check
 
     def test_template_error_handling(
         self, tmp_path, sample_payload, mock_ssh_keys, monkeypatch
@@ -264,9 +295,9 @@ class TestDeploymentService:
             def render(self, **kwargs):
                 raise Exception("Template rendering failed")
 
-        monkeypatch.setattr("app.service.get_template", lambda: _FailingTemplate())
+        monkeypatch.setattr("app.service.build_template", lambda: _FailingTemplate())
 
         svc = DeploymentService(directory=tmp_path)
 
         with pytest.raises(Exception, match="Template rendering failed"):
-            svc.set_payload(sample_payload, Path("key"), Path("key.pub"))
+            svc.set_payload(sample_payload, Path("key"), Path("key.pub"), "oracle")
