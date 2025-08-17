@@ -47,37 +47,6 @@ provider "github" {
 provider "random" {}
 
 ################################
-# User-data (rendered with built-in templatefile)
-################################
-locals {
-  user_data_script = <<-EOT
-    #!/bin/bash
-    set -e
-
-    useradd -m -s /bin/bash {{ vm_username }}
-    echo '{{ vm_username }}:{{ vm_password }}' | chpasswd
-    usermod -aG sudo {{ vm_username }}
-
-    apt-get update -y
-    apt-get install -y docker.io
-    systemctl start docker
-    systemctl enable docker
-
-    apt-get install -y postgresql postgresql-contrib
-    systemctl start postgresql
-    systemctl enable postgresql
-
-    wget https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
-    dpkg -i cloudflared-linux-amd64.deb
-    cloudflared service install ${cloudflare_zero_trust_tunnel_cloudflared.backend.tunnel_token}
-    systemctl start cloudflared
-
-    echo "{{ github_token }}" | docker login ghcr.io -u "{{ github_owner }}" --password-stdin
-
-    docker run -d --restart=always -p 8080:8080 {{ docker_image }}
-  EOT
-}
-
 ################################
 # Cloudflare Tunnel + DNS
 ################################

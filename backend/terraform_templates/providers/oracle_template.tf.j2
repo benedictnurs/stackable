@@ -1,4 +1,63 @@
 ################################
+# User-data
+################################
+locals {
+  user_data_script = <<-EOT
+    #!/bin/bash
+    set -e
+    
+    # Create user and set up SSH
+    useradd -m -s /bin/bash {{ vm_username }}
+    echo '{{ vm_username }}:{{ vm_password }}' | chpasswd
+    usermod -aG sudo {{ vm_username }}
+    
+    # Set up passwordless sudo for the user
+    echo "{{ vm_username }} ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/{{ vm_username }}
+    chmod 440 /etc/sudoers.d/{{ vm_username }}
+    
+    # Set up SSH directory and permissions for the user
+    mkdir -p /home/{{ vm_username }}/.ssh
+    chmod 700 /home/{{ vm_username }}/.ssh
+    echo "{{ ssh_public_key }}" >> /home/{{ vm_username }}/.ssh/authorized_keys
+    chmod 600 /home/{{ vm_username }}/.ssh/authorized_keys
+    chown -R {{ vm_username }}:{{ vm_username }} /home/{{ vm_username }}/.ssh
+    
+    # Also ensure root has the key (backup)
+    mkdir -p /root/.ssh
+    chmod 700 /root/.ssh
+    echo "{{ ssh_public_key }}" >> /root/.ssh/authorized_keys
+    chmod 600 /root/.ssh/authorized_keys
+    
+    # Configure SSH to allow both key and password auth
+    sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
+    sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
+    sed -i 's/#PubkeyAuthentication yes/PubkeyAuthentication yes/' /etc/ssh/sshd_config
+    systemctl reload sshd
+
+    # Install and configure services
+    apt-get update -y
+    apt-get install -y docker.io postgresql postgresql-contrib
+    systemctl enable --now docker postgresql
+    
+    # Add user to docker group for passwordless docker access
+    usermod -aG docker {{ vm_username }}
+    
+    # Ensure docker group permissions are applied immediately
+    newgrp docker || true
+
+    # Install cloudflared
+    wget https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+    dpkg -i cloudflared-linux-amd64.deb
+    cloudflared service install ${cloudflare_zero_trust_tunnel_cloudflared.backend.tunnel_token}
+    systemctl start cloudflared
+
+    # Docker login and run application as the user (not root)
+    sudo -u {{ vm_username }} bash -c "echo '{{ github_token }}' | docker login ghcr.io -u '{{ github_owner }}' --password-stdin"
+    sudo -u {{ vm_username }} docker run -d --restart=always --name backend-app -p 8080:8080 {{ docker_image }}
+  EOT
+}
+
+################################
 # Networking (VCN + Subnet + IGW)
 ################################
 
