@@ -47,44 +47,6 @@ provider "github" {
 provider "random" {}
 
 ################################
-# Cloudflare Tunnel + DNS
-################################
-resource "random_password" "tunnel_secret" {
-  length  = 32
-  special = false
-}
-
-resource "cloudflare_zero_trust_tunnel_cloudflared" "backend" {
-  account_id = "{{ cf_account_id }}"
-  name       = "oci-backend"
-  secret = base64encode(random_password.tunnel_secret.result)
-}
-
-resource "cloudflare_record" "api_dns" {
-  count   = "{{ domain }}" == "" ? 0 : 1
-  zone_id = "{{ cf_zone_id }}"
-  name    = "api"
-  type    = "CNAME"
-  content = cloudflare_zero_trust_tunnel_cloudflared.backend.cname
-  proxied = true
-}
-
-resource "cloudflare_zero_trust_tunnel_cloudflared_config" "backend_config" {
-  account_id = "{{ cf_account_id }}"
-  tunnel_id  = cloudflare_zero_trust_tunnel_cloudflared.backend.id
-
-  config {
-    ingress_rule {
-      hostname = "api.{{ domain }}"
-      service  = "http://localhost:8080"
-    }
-    ingress_rule {
-      service = "http_status:404"
-    }
-  }
-}
-
-################################
 # User-data (rendered with built-in templatefile)
 ################################
 locals {
@@ -114,6 +76,49 @@ locals {
 
     docker run -d --restart=always -p 8080:8080 {{ docker_image }}
   EOT
+}
+
+################################
+# Cloudflare Tunnel + DNS
+################################
+resource "random_password" "tunnel_secret" {
+  length  = 32
+  special = false
+}
+
+resource "random_id" "tunnel_suffix" {
+  byte_length = 4
+}
+
+resource "cloudflare_zero_trust_tunnel_cloudflared" "backend" {
+  account_id = "{{ cf_account_id }}"
+  name       = "oci-backend-${random_id.tunnel_suffix.hex}"
+  secret     = base64encode(random_password.tunnel_secret.result)
+}
+
+resource "cloudflare_record" "api_dns" {
+  count           = "{{ domain }}" == "" ? 0 : 1
+  zone_id         = "{{ cf_zone_id }}"
+  name            = "api"
+  type            = "CNAME"
+  content         = cloudflare_zero_trust_tunnel_cloudflared.backend.cname
+  proxied         = true
+  allow_overwrite = true
+}
+
+resource "cloudflare_zero_trust_tunnel_cloudflared_config" "backend_config" {
+  account_id = "{{ cf_account_id }}"
+  tunnel_id  = cloudflare_zero_trust_tunnel_cloudflared.backend.id
+
+  config {
+    ingress_rule {
+      hostname = "api.{{ domain }}"
+      service  = "http://localhost:8080"
+    }
+    ingress_rule {
+      service = "http_status:404"
+    }
+  }
 }
 
 ################################

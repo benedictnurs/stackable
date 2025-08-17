@@ -23,14 +23,14 @@ def run_job(
     )
 
     rendered_template = templates[0]
-    # provider_template = templates[1]
+    provider_template = templates[1]
 
     deployment_service.generate_tf_files(
         rendered_template, private_key_path, file_name="main.tf"
     )
-    # deployment_service.generate_tf_files(
-    #     provider_template, private_key_path, file_name="provider.tf"
-    # )
+    deployment_service.generate_tf_files(
+        provider_template, private_key_path, file_name="provider.tf"
+    )
 
     print("Generated Terraform files successfully!")
     print("Starting deployment process...")
@@ -64,5 +64,4 @@ if __name__ == "__main__":
             build_job.cleanup()
             print("Cleanup completed.")
         else:
-            build_job.cleanup()
             print("No cleanup needed - deployment service was not created.")

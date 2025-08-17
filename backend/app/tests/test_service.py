@@ -294,7 +294,7 @@ class TestDeploymentService:
         else:
             content_to_check = result
 
-        assert 'count   = "" == "" ? 0 : 1' in content_to_check
+        assert 'count           = "" == "" ? 0 : 1' in content_to_check
         assert 'hostname = "api."' in content_to_check
 
     def test_template_error_handling(
