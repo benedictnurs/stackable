@@ -1,91 +1,181 @@
 ################################
-# Terraform & Provider Configuration
+# User-data
 ################################
-terraform {
-  required_providers {
-    oci = {
-      source  = "oracle/oci"
-      version = "~> 5.0"
-    }
-    cloudflare = {
-      source  = "cloudflare/cloudflare"
-      version = "~> 4.0"
-    }
-    github = {
-      source  = "integrations/github"
-      version = "~> 6.0"
-    }
-    random = {
-      source  = "hashicorp/random"
-      version = "~> 3.0"
-    }
-  }
-}
+locals {
+  user_data_script = <<-EOT
+    #!/bin/bash
+    set -e
+    
+    # Create user and set up SSH
+    useradd -m -s /bin/bash {{ vm_username }}
+    echo '{{ vm_username }}:{{ vm_password }}' | chpasswd
+    usermod -aG sudo {{ vm_username }}
+    
+    # Set up passwordless sudo for the user
+    echo "{{ vm_username }} ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/{{ vm_username }}
+    chmod 440 /etc/sudoers.d/{{ vm_username }}
+    
+    # Set up SSH directory and permissions for the user
+    mkdir -p /home/{{ vm_username }}/.ssh
+    chmod 700 /home/{{ vm_username }}/.ssh
+    echo "{{ ssh_public_key }}" >> /home/{{ vm_username }}/.ssh/authorized_keys
+    chmod 600 /home/{{ vm_username }}/.ssh/authorized_keys
+    chown -R {{ vm_username }}:{{ vm_username }} /home/{{ vm_username }}/.ssh
+    
+    # Also ensure root has the key (backup)
+    mkdir -p /root/.ssh
+    chmod 700 /root/.ssh
+    echo "{{ ssh_public_key }}" >> /root/.ssh/authorized_keys
+    chmod 600 /root/.ssh/authorized_keys
+    
+    # Configure SSH to allow both key and password auth
+    sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
+    sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
+    sed -i 's/#PubkeyAuthentication yes/PubkeyAuthentication yes/' /etc/ssh/sshd_config
+    systemctl reload sshd
 
-################################
-# Provider Configuration
-################################
-provider "oci" {
-  tenancy_ocid = "{{ tenancy_ocid }}"
-  user_ocid    = "{{ user_ocid }}"
-  fingerprint  = "{{ fingerprint }}"
-  private_key  = <<EOF
-{{ ssh_private_key }}
-EOF
-  region       = "{{ region }}"
-}
+    # Install and configure services
+    apt-get update -y
+    apt-get install -y docker.io postgresql postgresql-contrib
+    systemctl enable --now docker postgresql
+    
+    # Add user to docker group for passwordless docker access
+    usermod -aG docker {{ vm_username }}
+    
+    # Ensure docker group permissions are applied immediately
+    newgrp docker || true
 
-provider "cloudflare" {
-  api_token = "{{ cf_api_token }}"
-}
+    # Install cloudflared
+    wget https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+    dpkg -i cloudflared-linux-amd64.deb
+    cloudflared service install ${cloudflare_zero_trust_tunnel_cloudflared.backend.tunnel_token}
+    systemctl start cloudflared
 
-provider "github" {
-  token = "{{ github_token }}"
-  owner = "{{ github_owner }}"
+    # Docker login and run application as the user (not root)
+    sudo -u {{ vm_username }} bash -c "echo '{{ github_token }}' | docker login ghcr.io -u '{{ github_owner }}' --password-stdin"
+    sudo -u {{ vm_username }} docker run -d --restart=always --name backend-app -p 8080:8080 {{ docker_image }}
+  EOT
 }
-
-provider "random" {}
 
 ################################
 # Networking (VCN + Subnet + IGW)
 ################################
+
+# Try to find existing VCN first
+data "oci_core_vcns" "existing_vcns" {
+  compartment_id = "{{ compartment_ocid }}"
+  display_name   = "backend-vcn"
+}
+
+# Create VCN only if it doesn't exist
 resource "oci_core_vcn" "vcn" {
+  count          = length(data.oci_core_vcns.existing_vcns.virtual_networks) == 0 ? 1 : 0
   compartment_id = "{{ compartment_ocid }}"
   cidr_block     = "10.0.0.0/16"
   display_name   = "backend-vcn"
   dns_label      = "backendvcn"
 }
 
-resource "oci_core_internet_gateway" "igw" {
+# Use existing VCN or the newly created one
+locals {
+  vcn_id = length(data.oci_core_vcns.existing_vcns.virtual_networks) > 0 ? data.oci_core_vcns.existing_vcns.virtual_networks[0].id : oci_core_vcn.vcn[0].id
+}
+
+# Try to find existing internet gateway
+data "oci_core_internet_gateways" "existing_igws" {
   compartment_id = "{{ compartment_ocid }}"
-  vcn_id         = oci_core_vcn.vcn.id
+  vcn_id         = local.vcn_id
   display_name   = "igw"
 }
 
-resource "oci_core_route_table" "rt" {
+# Create internet gateway only if it doesn't exist
+resource "oci_core_internet_gateway" "igw" {
+  count          = length(data.oci_core_internet_gateways.existing_igws.gateways) == 0 ? 1 : 0
   compartment_id = "{{ compartment_ocid }}"
-  vcn_id         = oci_core_vcn.vcn.id
+  vcn_id         = local.vcn_id
+  display_name   = "igw"
+}
+
+# Use existing IGW or the newly created one
+locals {
+  igw_id = length(data.oci_core_internet_gateways.existing_igws.gateways) > 0 ? data.oci_core_internet_gateways.existing_igws.gateways[0].id : oci_core_internet_gateway.igw[0].id
+}
+
+# Try to find existing route table
+data "oci_core_route_tables" "existing_route_tables" {
+  compartment_id = "{{ compartment_ocid }}"
+  vcn_id         = local.vcn_id
+}
+
+# Create route table only if default one doesn't have internet gateway route
+resource "oci_core_route_table" "rt" {
+  count          = length([for rt in data.oci_core_route_tables.existing_route_tables.route_tables : rt if length([for rule in rt.route_rules : rule if rule.destination == "0.0.0.0/0"]) > 0]) == 0 ? 1 : 0
+  compartment_id = "{{ compartment_ocid }}"
+  vcn_id         = local.vcn_id
 
   route_rules {
     destination       = "0.0.0.0/0"
     destination_type  = "CIDR_BLOCK"
-    network_entity_id = oci_core_internet_gateway.igw.id
+    network_entity_id = local.igw_id
   }
 }
 
-resource "oci_core_security_list" "allow_ssh" {
+# Use existing route table or the newly created one
+locals {
+  route_table_id = length([for rt in data.oci_core_route_tables.existing_route_tables.route_tables : rt if length([for rule in rt.route_rules : rule if rule.destination == "0.0.0.0/0"]) > 0]) > 0 ? [for rt in data.oci_core_route_tables.existing_route_tables.route_tables : rt if length([for rule in rt.route_rules : rule if rule.destination == "0.0.0.0/0"]) > 0][0].id : oci_core_route_table.rt[0].id
+}
+
+# Try to find existing security list with SSH access
+data "oci_core_security_lists" "existing_security_lists" {
   compartment_id = "{{ compartment_ocid }}"
-  vcn_id         = oci_core_vcn.vcn.id
+  vcn_id         = local.vcn_id
+  display_name   = "Allow SSH"
+}
+
+# Create security list only if it doesn't exist
+resource "oci_core_security_list" "allow_ssh" {
+  count          = length(data.oci_core_security_lists.existing_security_lists.security_lists) == 0 ? 1 : 0
+  compartment_id = "{{ compartment_ocid }}"
+  vcn_id         = local.vcn_id
   display_name   = "Allow SSH"
 
   ingress_security_rules {
     protocol    = "6"
     source      = "0.0.0.0/0"
     description = "Allow SSH from anywhere"
-
     tcp_options {
       min = 22
       max = 22
+    }
+  }
+
+  ingress_security_rules {
+    protocol    = "6"
+    source      = "0.0.0.0/0"
+    description = "Allow HTTP traffic"
+    tcp_options {
+      min = 80
+      max = 80
+    }
+  }
+
+  ingress_security_rules {
+    protocol    = "6"
+    source      = "0.0.0.0/0"
+    description = "Allow HTTPS traffic"
+    tcp_options {
+      min = 443
+      max = 443
+    }
+  }
+
+  ingress_security_rules {
+    protocol    = "6"
+    source      = "0.0.0.0/0"
+    description = "Allow application traffic"
+    tcp_options {
+      min = 8080
+      max = 8080
     }
   }
 
@@ -95,85 +185,33 @@ resource "oci_core_security_list" "allow_ssh" {
   }
 }
 
-resource "oci_core_subnet" "subnet" {
-  compartment_id             = "{{ compartment_ocid }}"
-  vcn_id                     = oci_core_vcn.vcn.id
-  cidr_block                 = "10.0.1.0/24"
-  display_name               = "backend-subnet"
-  route_table_id             = oci_core_route_table.rt.id
-  dns_label                  = "backend"
-  prohibit_public_ip_on_vnic = false
-  security_list_ids          = [oci_core_security_list.allow_ssh.id]
-}
-
-################################
-# Cloudflare Tunnel + DNS
-################################
-resource "random_password" "tunnel_secret" {
-  length  = 32
-  special = false
-}
-
-resource "cloudflare_zero_trust_tunnel_cloudflared" "backend" {
-  account_id = "{{ cf_account_id }}"
-  name       = "oci-backend"
-  secret = base64encode(random_password.tunnel_secret.result)
-}
-
-resource "cloudflare_record" "api_dns" {
-  count   = "{{ domain }}" == "" ? 0 : 1
-  zone_id = "{{ cf_zone_id }}"
-  name    = "api"
-  type    = "CNAME"
-  content = cloudflare_zero_trust_tunnel_cloudflared.backend.cname
-  proxied = true
-}
-
-resource "cloudflare_zero_trust_tunnel_cloudflared_config" "backend_config" {
-  account_id = "{{ cf_account_id }}"
-  tunnel_id  = cloudflare_zero_trust_tunnel_cloudflared.backend.id
-
-  config {
-    ingress_rule {
-      hostname = "api.{{ domain }}"
-      service  = "http://localhost:8080"
-    }
-    ingress_rule {
-      service = "http_status:404"
-    }
-  }
-}
-
-################################
-# User-data (rendered with built-in templatefile)
-################################
+# Use existing security list or the newly created one
 locals {
-  user_data_script = <<-EOT
-    #!/bin/bash
-    set -e
+  security_list_id = length(data.oci_core_security_lists.existing_security_lists.security_lists) > 0 ? data.oci_core_security_lists.existing_security_lists.security_lists[0].id : oci_core_security_list.allow_ssh[0].id
+}
 
-    useradd -m -s /bin/bash {{ vm_username }}
-    echo '{{ vm_username }}:{{ vm_password }}' | chpasswd
-    usermod -aG sudo {{ vm_username }}
+# Try to find existing subnet
+data "oci_core_subnets" "existing_subnets" {
+  compartment_id = "{{ compartment_ocid }}"
+  vcn_id         = local.vcn_id
+  display_name   = "backend-subnet"
+}
 
-    apt-get update -y
-    apt-get install -y docker.io
-    systemctl start docker
-    systemctl enable docker
+# Create subnet only if it doesn't exist
+resource "oci_core_subnet" "subnet" {
+  count             = length(data.oci_core_subnets.existing_subnets.subnets) == 0 ? 1 : 0
+  cidr_block        = "10.0.1.0/24"
+  display_name      = "backend-subnet"
+  dns_label         = "backend"
+  security_list_ids = [local.security_list_id]
+  compartment_id    = "{{ compartment_ocid }}"
+  vcn_id            = local.vcn_id
+  route_table_id    = local.route_table_id
+}
 
-    apt-get install -y postgresql postgresql-contrib
-    systemctl start postgresql
-    systemctl enable postgresql
-
-    wget https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
-    dpkg -i cloudflared-linux-amd64.deb
-    cloudflared service install ${cloudflare_zero_trust_tunnel_cloudflared.backend.tunnel_token}
-    systemctl start cloudflared
-
-    echo "{{ github_token }}" | docker login ghcr.io -u "{{ github_owner }}" --password-stdin
-
-    docker run -d --restart=always -p 8080:8080 {{ docker_image }}
-  EOT
+# Use existing subnet or the newly created one
+locals {
+  subnet_id = length(data.oci_core_subnets.existing_subnets.subnets) > 0 ? data.oci_core_subnets.existing_subnets.subnets[0].id : oci_core_subnet.subnet[0].id
 }
 
 ################################
@@ -199,7 +237,7 @@ resource "oci_core_instance" "vm" {
   display_name        = "{{ instance_name }}"
 
   create_vnic_details {
-    subnet_id        = oci_core_subnet.subnet.id
+    subnet_id        = local.subnet_id
     assign_public_ip = true
   }
 
@@ -213,123 +251,3 @@ resource "oci_core_instance" "vm" {
     source_id   = data.oci_core_images.ubuntu.images[0].id
   }
 }
-
-################################
-# GitHub Actions workflow & secrets
-################################
-locals {
-  ci_workflow = <<-YAML
-    name: Build & Deploy Backend
-    on:
-      push:
-        branches: [main]
-    permissions:
-      contents: read
-      packages: write
-    jobs:
-      build:
-        name: Build Docker Image
-        runs-on: ubuntu-latest
-        steps:
-          - uses: actions/checkout@v4
-          - uses: docker/setup-buildx-action@v3
-          - uses: docker/login-action@v3
-            with:
-              registry: ghcr.io
-              username: ${{ "${{ secrets.REPO_OWNER }}" }}
-              password: ${{ "${{ secrets.GHCR_TOKEN }}" }}
-          - uses: docker/build-push-action@v5
-            with:
-              context: ./backend
-              file: ./backend/Dockerfile
-              push: true
-              tags: ${{ "${{ secrets.DOCKER_IMAGE }}" }}
-
-      deploy:
-        name: Deploy to OCI
-        needs: build
-        runs-on: ubuntu-latest
-        steps:
-          - name: SSH and Deploy
-            uses: appleboy/ssh-action@master
-            with:
-              host: ${{ "${{ secrets.DEPLOY_HOST }}" }}
-              username: ${{ "${{ secrets.DEPLOY_USER }}" }}
-              key: ${{ "${{ secrets.DEPLOY_KEY }}" }}
-              script: |
-                set -e
-                echo "--- STARTING DEPLOYMENT ---"
-
-                echo "--> Logging in to GHCR..."
-                echo ${{ "${{ secrets.GHCR_TOKEN }}" }} | sudo docker login ghcr.io -u ${{ "${{ secrets.REPO_OWNER }}" }} --password-stdin
-
-                echo "--> Stopping existing container..."
-                sudo docker stop backend-app || true
-                sudo docker rm backend-app || true
-
-                echo "--> Pulling new Docker image..."
-                sudo docker pull ${{ "${{ secrets.DOCKER_IMAGE }}" }}
-
-                echo "--> Starting new container..."
-                sudo docker run -d --restart=always --name backend-app -p 8080:8080 ${{ "${{ secrets.DOCKER_IMAGE }}" }}
-
-                echo "--> Pruning old images..."
-                sudo docker image prune -f
-
-                echo "--- DEPLOYMENT COMPLETE ---"
-  YAML
-}
-
-resource "github_repository_file" "deploy-backend" {
-  repository          = "{{ repo_name }}"
-  file                = ".github/workflows/deploy-backend.yml"
-  branch              = "main"
-  content             = local.ci_workflow
-  overwrite_on_create = true
-  commit_message      = "Add CI workflow via Terraform"
-}
-
-resource "github_actions_secret" "ghcr" {
-  repository      = "{{ repo_name }}"
-  secret_name     = "GHCR_TOKEN"
-  plaintext_value = "{{ github_token }}"
-}
-
-resource "github_actions_secret" "deploy_host" {
-  repository      = "{{ repo_name }}"
-  secret_name     = "DEPLOY_HOST"
-  plaintext_value = oci_core_instance.vm.public_ip
-}
-
-resource "github_actions_secret" "deploy_user" {
-  repository      = "{{ repo_name }}"
-  secret_name     = "DEPLOY_USER"
-  plaintext_value = "{{ vm_username }}"
-}
-
-resource "github_actions_secret" "deploy_key" {
-  repository      = "{{ repo_name }}"
-  secret_name     = "DEPLOY_KEY"
-  plaintext_value = <<EOF
-{{ ssh_private_key }}
-EOF
-}
-
-resource "github_actions_secret" "docker_image" {
-  repository      = "{{ repo_name }}"
-  secret_name     = "DOCKER_IMAGE"
-  plaintext_value = "{{ docker_image }}"
-}
-
-resource "github_actions_secret" "repo_owner_secret" {
-  repository      = "{{ repo_name }}"
-  secret_name     = "REPO_OWNER"
-  plaintext_value = "{{ github_owner }}"
-}
-
-################################
-# Outputs
-################################
-output "public_ip"   { value = oci_core_instance.vm.public_ip }
-output "tunnel_url"  { value = "${cloudflare_zero_trust_tunnel_cloudflared.backend.id}.cfargotunnel.com" }
-output "pretty_url"  { value = try(cloudflare_record.api_dns[0].hostname, "") }
