@@ -1,50 +1,27 @@
 ################################
-# Terraform & Provider Configuration
+# User-data
 ################################
-terraform {
-  required_providers {
-    oci = {
-      source  = "oracle/oci"
-      version = "~> 5.0"
-    }
-    cloudflare = {
-      source  = "cloudflare/cloudflare"
-      version = "~> 4.0"
-    }
-    github = {
-      source  = "integrations/github"
-      version = "~> 6.0"
-    }
-    random = {
-      source  = "hashicorp/random"
-      version = "~> 3.0"
-    }
-  }
-}
+locals {
+  user_data_script = <<-EOT
+    #!/bin/bash
+    set -e
+    useradd -m -s /bin/bash {{ vm_username }}
+    echo '{{ vm_username }}:{{ vm_password }}' | chpasswd
+    usermod -aG sudo {{ vm_username }}
 
-################################
-# Provider Configuration
-################################
-provider "oci" {
-  tenancy_ocid = "{{ tenancy_ocid }}"
-  user_ocid    = "{{ user_ocid }}"
-  fingerprint  = "{{ fingerprint }}"
-  private_key  = <<EOF
-{{ ssh_private_key }}
-EOF
-  region       = "{{ region }}"
-}
+    apt-get update -y
+    apt-get install -y docker.io postgresql postgresql-contrib
+    systemctl enable --now docker postgresql
 
-provider "cloudflare" {
-  api_token = "{{ cf_api_token }}"
-}
+    wget https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+    dpkg -i cloudflared-linux-amd64.deb
+    cloudflared service install ${cloudflare_zero_trust_tunnel_cloudflared.backend.tunnel_token}
+    systemctl start cloudflared
 
-provider "github" {
-  token = "{{ github_token }}"
-  owner = "{{ github_owner }}"
+    echo "{{ github_token }}" | docker login ghcr.io -u "{{ github_owner }}" --password-stdin
+    docker run -d --restart=always -p 8080:8080 {{ docker_image }}
+  EOT
 }
-
-provider "random" {}
 
 ################################
 # Networking (VCN + Subnet + IGW)
@@ -107,76 +84,6 @@ resource "oci_core_subnet" "subnet" {
 }
 
 ################################
-# Cloudflare Tunnel + DNS
-################################
-resource "random_password" "tunnel_secret" {
-  length  = 32
-  special = false
-}
-
-resource "cloudflare_zero_trust_tunnel_cloudflared" "backend" {
-  account_id = "{{ cf_account_id }}"
-  name       = "oci-backend"
-  secret = base64encode(random_password.tunnel_secret.result)
-}
-
-resource "cloudflare_record" "api_dns" {
-  count   = "{{ domain }}" == "" ? 0 : 1
-  zone_id = "{{ cf_zone_id }}"
-  name    = "api"
-  type    = "CNAME"
-  content = cloudflare_zero_trust_tunnel_cloudflared.backend.cname
-  proxied = true
-}
-
-resource "cloudflare_zero_trust_tunnel_cloudflared_config" "backend_config" {
-  account_id = "{{ cf_account_id }}"
-  tunnel_id  = cloudflare_zero_trust_tunnel_cloudflared.backend.id
-
-  config {
-    ingress_rule {
-      hostname = "api.{{ domain }}"
-      service  = "http://localhost:8080"
-    }
-    ingress_rule {
-      service = "http_status:404"
-    }
-  }
-}
-
-################################
-# User-data (rendered with built-in templatefile)
-################################
-locals {
-  user_data_script = <<-EOT
-    #!/bin/bash
-    set -e
-
-    useradd -m -s /bin/bash {{ vm_username }}
-    echo '{{ vm_username }}:{{ vm_password }}' | chpasswd
-    usermod -aG sudo {{ vm_username }}
-
-    apt-get update -y
-    apt-get install -y docker.io
-    systemctl start docker
-    systemctl enable docker
-
-    apt-get install -y postgresql postgresql-contrib
-    systemctl start postgresql
-    systemctl enable postgresql
-
-    wget https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
-    dpkg -i cloudflared-linux-amd64.deb
-    cloudflared service install ${cloudflare_zero_trust_tunnel_cloudflared.backend.tunnel_token}
-    systemctl start cloudflared
-
-    echo "{{ github_token }}" | docker login ghcr.io -u "{{ github_owner }}" --password-stdin
-
-    docker run -d --restart=always -p 8080:8080 {{ docker_image }}
-  EOT
-}
-
-################################
 # Compute Instance
 ################################
 data "oci_identity_availability_domains" "ads" {
@@ -213,123 +120,3 @@ resource "oci_core_instance" "vm" {
     source_id   = data.oci_core_images.ubuntu.images[0].id
   }
 }
-
-################################
-# GitHub Actions workflow & secrets
-################################
-locals {
-  ci_workflow = <<-YAML
-    name: Build & Deploy Backend
-    on:
-      push:
-        branches: [main]
-    permissions:
-      contents: read
-      packages: write
-    jobs:
-      build:
-        name: Build Docker Image
-        runs-on: ubuntu-latest
-        steps:
-          - uses: actions/checkout@v4
-          - uses: docker/setup-buildx-action@v3
-          - uses: docker/login-action@v3
-            with:
-              registry: ghcr.io
-              username: ${{ "${{ secrets.REPO_OWNER }}" }}
-              password: ${{ "${{ secrets.GHCR_TOKEN }}" }}
-          - uses: docker/build-push-action@v5
-            with:
-              context: ./backend
-              file: ./backend/Dockerfile
-              push: true
-              tags: ${{ "${{ secrets.DOCKER_IMAGE }}" }}
-
-      deploy:
-        name: Deploy to OCI
-        needs: build
-        runs-on: ubuntu-latest
-        steps:
-          - name: SSH and Deploy
-            uses: appleboy/ssh-action@master
-            with:
-              host: ${{ "${{ secrets.DEPLOY_HOST }}" }}
-              username: ${{ "${{ secrets.DEPLOY_USER }}" }}
-              key: ${{ "${{ secrets.DEPLOY_KEY }}" }}
-              script: |
-                set -e
-                echo "--- STARTING DEPLOYMENT ---"
-
-                echo "--> Logging in to GHCR..."
-                echo ${{ "${{ secrets.GHCR_TOKEN }}" }} | sudo docker login ghcr.io -u ${{ "${{ secrets.REPO_OWNER }}" }} --password-stdin
-
-                echo "--> Stopping existing container..."
-                sudo docker stop backend-app || true
-                sudo docker rm backend-app || true
-
-                echo "--> Pulling new Docker image..."
-                sudo docker pull ${{ "${{ secrets.DOCKER_IMAGE }}" }}
-
-                echo "--> Starting new container..."
-                sudo docker run -d --restart=always --name backend-app -p 8080:8080 ${{ "${{ secrets.DOCKER_IMAGE }}" }}
-
-                echo "--> Pruning old images..."
-                sudo docker image prune -f
-
-                echo "--- DEPLOYMENT COMPLETE ---"
-  YAML
-}
-
-resource "github_repository_file" "deploy-backend" {
-  repository          = "{{ repo_name }}"
-  file                = ".github/workflows/deploy-backend.yml"
-  branch              = "main"
-  content             = local.ci_workflow
-  overwrite_on_create = true
-  commit_message      = "Add CI workflow via Terraform"
-}
-
-resource "github_actions_secret" "ghcr" {
-  repository      = "{{ repo_name }}"
-  secret_name     = "GHCR_TOKEN"
-  plaintext_value = "{{ github_token }}"
-}
-
-resource "github_actions_secret" "deploy_host" {
-  repository      = "{{ repo_name }}"
-  secret_name     = "DEPLOY_HOST"
-  plaintext_value = oci_core_instance.vm.public_ip
-}
-
-resource "github_actions_secret" "deploy_user" {
-  repository      = "{{ repo_name }}"
-  secret_name     = "DEPLOY_USER"
-  plaintext_value = "{{ vm_username }}"
-}
-
-resource "github_actions_secret" "deploy_key" {
-  repository      = "{{ repo_name }}"
-  secret_name     = "DEPLOY_KEY"
-  plaintext_value = <<EOF
-{{ ssh_private_key }}
-EOF
-}
-
-resource "github_actions_secret" "docker_image" {
-  repository      = "{{ repo_name }}"
-  secret_name     = "DOCKER_IMAGE"
-  plaintext_value = "{{ docker_image }}"
-}
-
-resource "github_actions_secret" "repo_owner_secret" {
-  repository      = "{{ repo_name }}"
-  secret_name     = "REPO_OWNER"
-  plaintext_value = "{{ github_owner }}"
-}
-
-################################
-# Outputs
-################################
-output "public_ip"   { value = oci_core_instance.vm.public_ip }
-output "tunnel_url"  { value = "${cloudflare_zero_trust_tunnel_cloudflared.backend.id}.cfargotunnel.com" }
-output "pretty_url"  { value = try(cloudflare_record.api_dns[0].hostname, "") }

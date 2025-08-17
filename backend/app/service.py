@@ -148,18 +148,20 @@ class DeploymentService:
         print("Terraform plan completed successfully!")
         print(f"Plan output: {stdout}")
 
-        # # Run terraform apply
-        # print("Running terraform apply...")
-        # stdout, stderr, returncode = execute_command("terraform apply -auto-approve", self.directory, timeout=1200)
+        # Run terraform apply
+        print("Running terraform apply...")
+        stdout, stderr, returncode = execute_command(
+            "terraform apply -auto-approve", self.directory, timeout=1200
+        )
 
-        # if returncode != 0:
-        #     print(f"Terraform apply failed with return code: {returncode}")
-        #     print(f"STDERR: {stderr}")
-        #     print(f"STDOUT: {stdout}")
-        #     raise RuntimeError(f"Terraform apply failed: {stderr}")
+        if returncode != 0:
+            print(f"Terraform apply failed with return code: {returncode}")
+            print(f"STDERR: {stderr}")
+            print(f"STDOUT: {stdout}")
+            raise RuntimeError(f"Terraform apply failed: {stderr}")
 
-        # print("Terraform apply completed successfully!")
-        # print(f"Apply output: {stdout}")
+        print("Terraform apply completed successfully!")
+        print(f"Apply output: {stdout}")
 
         return {"init_success": True, "plan_success": True, "plan_output": stdout}
 
