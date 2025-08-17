@@ -227,27 +227,38 @@ class TestDeploymentService:
             template_result, provider_result = result
             # Check that we have actual template content, not just our mock result
             assert isinstance(template_result, str) and len(template_result) > 0
-            content_to_check = template_result
+            assert isinstance(provider_result, str) and len(provider_result) > 0
+            main_content = template_result
+            provider_content = provider_result
         else:
             assert isinstance(result, str) and len(result) > 0
-            content_to_check = result
+            main_content = result
+            provider_content = ""
 
-        # Check key template elements are present
-        expected_content = [
+        # Check key template elements are present in main template
+        main_expected_content = [
             "terraform {",
             'provider "oci"',
             'provider "cloudflare"',
             'provider "github"',
-            'resource "oci_core_vcn"',
             'resource "cloudflare_zero_trust_tunnel_cloudflared"',
             'resource "github_repository_file"',
             "ocid1.tenancy.oc1..tenancy",
             "cf_token_123",
             "testuser",
-            "ssh-rsa AAAAB3NzaC1yc2E...test_key",
         ]
-        for content in expected_content:
-            assert content in content_to_check
+        for content in main_expected_content:
+            assert content in main_content
+
+        # Check Oracle-specific content in provider template (if tuple was returned)
+        if isinstance(result, tuple):
+            oracle_expected_content = [
+                'resource "oci_core_vcn"',
+                'resource "oci_core_instance"',
+                "ssh-rsa AAAAB3NzaC1yc2E...test_key",
+            ]
+            for content in oracle_expected_content:
+                assert content in provider_content
 
     def test_template_domain_handling(self, tmp_path, mock_ssh_keys):
         """Test template rendering with different domain configurations."""
@@ -283,7 +294,7 @@ class TestDeploymentService:
         else:
             content_to_check = result
 
-        assert 'count   = "" == "" ? 0 : 1' in content_to_check
+        assert 'count           = "" == "" ? 0 : 1' in content_to_check
         assert 'hostname = "api."' in content_to_check
 
     def test_template_error_handling(

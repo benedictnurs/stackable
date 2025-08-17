@@ -32,20 +32,36 @@ def run_job(
         provider_template, private_key_path, file_name="provider.tf"
     )
 
+    print("Generated Terraform files successfully!")
+    print("Starting deployment process...")
+    deployment_service.deploy()
     return deployment_service
 
 
 if __name__ == "__main__":
-    build_job = run_job(
-        Path("test_files/benedictnursalim@gmail.com-2025-06-27T06_04_12.763Z.pem"),
-        Path(
-            "test_files/benedictnursalim@gmail.com-2025-06-29T21_31_31.231Z_public.pem"
-        ),
-        Path("test_files/payload.json"),
-        "oracle",
-    )
-    print(f"Terraform files generated in: {build_job.directory}")
-    print("Waiting 10 seconds before cleanup...")
-    time.sleep(10)
-    build_job.cleanup()
-    print("Cleanup completed.")
+    build_job = None
+    try:
+        build_job = run_job(
+            Path("test_files/benedictnursalim@gmail.com-2025-08-15T19_04_27.768Z.pem"),
+            Path(
+                "test_files/benedictnursalim@gmail.com-2025-08-15T19_04_28.902Z_public.pem"
+            ),
+            Path("test_files/payload.json"),
+            "oracle",
+        )
+        print(f"Terraform files generated in: {build_job.directory}")
+        print("Deployment completed successfully!")
+
+    except Exception as e:
+        print(f"Deployment failed with error: {e}")
+        if build_job:
+            print(f"Files were generated in: {build_job.directory}")
+
+    finally:
+        if build_job:
+            print("Waiting 10 seconds before cleanup...")
+            time.sleep(10)
+            build_job.cleanup()
+            print("Cleanup completed.")
+        else:
+            print("No cleanup needed - deployment service was not created.")
